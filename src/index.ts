@@ -110,6 +110,16 @@ const VERIFY_STAGES = [
   'ultimately verified'
 ];
 
+// ====== Accept Command ======
+const acceptCommand = new SlashCommandBuilder()
+  .setName('accept')
+  .setDescription('Accept a level by post ID or tag')
+  .addStringOption(option => 
+    option.setName('postid')
+      .setDescription('Post ID or Tag of the level to accept')
+      .setRequired(true)
+  )
+  .toJSON();
 // ====== List Command ======
 const listCommand = new SlashCommandBuilder()
   .setName('list')
@@ -144,7 +154,8 @@ client.once('ready', async () => {
     .setDescription('Get verified (...What if you sennd this multiple times...?)')
     .toJSON(),
   voteCommand,
-  listCommand
+  listCommand,
+  acceptCommand
 ];
 
   await guild.commands.set(commands);
@@ -207,93 +218,84 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ====== Accept Command ======
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  if (!message.guild) return;
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName !== 'accept') return;
 
-  const MANAGER_ROLE = process.env.MANAGER || '';
-  const managerRole = message.guild.roles.cache.find(r => r.name === MANAGER_ROLE);
-  if (!managerRole) return;
-  if (!message.member?.roles.cache.has(managerRole.id)) return;
-
-  const prefix = '/accept ';
-  if (!message.content.startsWith(prefix)) return;
-
-  const postIdOrTag = message.content.slice(prefix.length).trim();
-  if (!postIdOrTag) {
-    message.reply('Please provide a post ID or tag.');
+  // 서버 제한
+  if (interaction.guildId !== process.env.GUILD_ID) {
+    await interaction.reply({ content: '❌ This command can only be used in the allowed server.', ephemeral: true });
     return;
   }
 
-  const levelName = postIdOrTag;
+  const member = interaction.member as GuildMember;
+  const managerRoleName = process.env.MANAGER || '';
+  if (!member.roles.cache.some(r => r.name === managerRoleName)) {
+    await interaction.reply({ content: '❌ You do not have permission to use this command.', ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const postIdOrTag = interaction.options.getString('postid', true);
 
   const pendings = loadPending();
-  const existing = pendings.find(p => p.postIdOrTag === postIdOrTag);
-  if (existing) {
-    message.reply(`This post/tag is already accepted.`);
+  if (pendings.find(p => p.postIdOrTag === postIdOrTag)) {
+    await interaction.editReply('This post/tag is already accepted.');
     return;
   }
 
-  // 썸네일 자동 추출 시도
-  let thumbnailUrl = 'https://via.placeholder.com/150'; // 기본 이미지
+  // 기본 썸네일
+  let thumbnailUrl = 'https://via.placeholder.com/150';
 
+  // 썸네일 자동 추출 시도
   try {
     const channel = await client.channels.fetch(postIdOrTag);
-
-    if (channel && channel.isThread()) {
-  const starterMessage = await channel.fetchStarterMessage();
-
-  if (starterMessage) {
-    if (starterMessage.attachments.size > 0) {
-      const imgAttachment = starterMessage.attachments.find(att => att.contentType?.startsWith('image/'));
-      if (imgAttachment) thumbnailUrl = imgAttachment.url;
-    }
-
-    if (!thumbnailUrl && starterMessage.embeds.length > 0) {
-      const embed = starterMessage.embeds[0];
-      if (embed.thumbnail?.url) {
-        thumbnailUrl = embed.thumbnail.url;
-      } else if (embed.image?.url) {
-        thumbnailUrl = embed.image.url;
+    if (channel?.isThread()) {
+      const starterMessage = await channel.fetchStarterMessage();
+      if (starterMessage) {
+        if (starterMessage.attachments.size > 0) {
+          const imgAttachment = starterMessage.attachments.find(att => att.contentType?.startsWith('image/'));
+          if (imgAttachment) thumbnailUrl = imgAttachment.url;
+        }
+        if ((!thumbnailUrl || thumbnailUrl === 'https://via.placeholder.com/150') && starterMessage.embeds.length > 0) {
+          const embed = starterMessage.embeds[0];
+          thumbnailUrl = embed.thumbnail?.url ?? embed.image?.url ?? thumbnailUrl;
+        }
       }
     }
-  }
-}
-  } catch (e) {
-    console.log('Error fetching thread or thumbnail:', e);
-    // 그냥 기본 썸네일 유지
+  } catch {
+    // 무시하고 기본 썸네일 유지
   }
 
+  // 저장
   pendings.push({
     postIdOrTag,
-    levelName,
-    authorId: message.author.id,
+    levelName: postIdOrTag,
+    authorId: interaction.user.id,
     ranks: [],
-    votes: {
-      song: [],
-      design: [],
-      vibe: []
-    }
+    votes: { song: [], design: [], vibe: [] },
+    thumbnailUrl
   });
   savePending(pendings);
 
-  const notifyChannel = message.channel;
-  if (!notifyChannel?.isTextBased()) {
-    message.reply('Cannot send notification in this channel.');
-    return;
-  }
-
+  // 알림 메시지 (명령어 사용 채널)
   const embed = new EmbedBuilder()
-    .setTitle(`${levelName} has been accepted!`)
-    .setDescription(`by <@${message.author.id}>`)
+    .setTitle(`${postIdOrTag} has been accepted!`)
+    .setDescription(`by <@${interaction.user.id}>`)
     .setThumbnail(thumbnailUrl)
     .setFooter({ text: 'Use /vote for This COOL Level!' })
     .setColor('#00FF00')
     .setTimestamp();
 
-  await notifyChannel.send({ embeds: [embed] });
+  const channel = interaction.channel as TextChannel | null;
+if (channel) {
+  await channel.send({ embeds: [embed] });
+} else {
+  await interaction.followUp({ content: 'Cannot send message in this channel.', ephemeral: true });
+}
 
-  await message.reply('Accepted and announced.');
+  await interaction.editReply('Accepted and announced.');
 });
 
 // ====== Vote Command Handler ======
