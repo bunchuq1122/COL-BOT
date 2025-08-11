@@ -1,19 +1,17 @@
-import { 
-  Client, 
-  GatewayIntentBits, 
-  Partials, 
-  TextChannel, 
-  MessageReaction, 
-  PartialMessageReaction, 
-  User, 
-  PartialUser 
+import {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  TextChannel,
+  GuildMember,
+  SlashCommandBuilder
 } from 'discord.js';
 import * as dotenv from 'dotenv';
 import http from 'http';
 dotenv.config();
 
+// HTTP 서버 (Render ping용)
 const port = process.env.PORT || 3000;
-
 http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Bot is running');
@@ -25,129 +23,71 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.MessageContent
   ],
-  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
+  partials: [Partials.Message, Partials.Channel]
 });
 
-const VERIFIED_ROLE_NAME = 'verified'; 
-const BASE_ROLE_NAME = process.env.MANAGER || ''; // 환경변수에서 불러옴
+// 재미용 단계별 역할 이름
+const VERIFY_STAGES = [
+  'verified',
+  'double verified',
+  'triple verified',
+  'ultimately verified'
+];
 
-let verifyMessageId: string | null = null;
-let verifiedRoleId: string | null = null;
-
-client.once('ready', () => {
+// 명령어 등록
+client.once('ready', async () => {
   console.log(`✅ Logged in as ${client.user?.tag}`);
+
+  const data = [
+    new SlashCommandBuilder()
+      .setName('verifyme')
+      .setDescription('Get verified (and fun titles if you run it multiple times!)')
+      .toJSON()
+  ];
+
+  const appId = process.env.CLIENT_ID!;
+  await client.application?.commands.set(data);
+  console.log('✅ Slash command registered');
 });
 
-client.on('messageReactionAdd', async (
-  reaction: MessageReaction | PartialMessageReaction,
-  user: User | PartialUser
-) => {
-  try {
-    if (reaction.partial) await reaction.fetch();
-    if (user.partial) await user.fetch();
-  } catch {
-    return;
-  }
-
-  if (user.bot) return;
-  if (!verifyMessageId) return;
-  if (reaction.message.id !== verifyMessageId) return;
-
-  const guild = reaction.message.guild;
-  if (!guild) return;
-
-  try {
-    const member = await guild.members.fetch(user.id);
-    if (!member) return;
-
-    if (!verifiedRoleId) return;
-    if (!member.roles.cache.has(verifiedRoleId)) {
-      await member.roles.add(verifiedRoleId);
-      console.log(`Added verified role to ${user.tag}`);
-    }
-  } catch (e) {
-    console.error('Error adding verified role:', e);
-  }
-});
-
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  if (!message.guild) return;
-
-  // !ping 간단 테스트용
-  if (message.content === '!ping') {
-    message.reply('🏓 Pong!');
-    return;
-  }
-
-  // !setup verify [채널멘션 or 채널ID]
-  if (message.content.startsWith('!setup verify')) {
-    const member = message.member;
-    if (!member) return;
-
-    // 기준 역할 가져오기
-    const baseRole = message.guild.roles.cache.find(r => r.name === BASE_ROLE_NAME);
-    if (!baseRole) {
-      message.reply(`Base role "${BASE_ROLE_NAME}" not found.`);
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName === 'verifyme') {
+    if (!interaction.guild) {
+      await interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
       return;
     }
 
-    // 권한 체크
-    if (member.roles.highest.position < baseRole.position) {
-      message.reply('You do not have permission to run this command.');
-      return;
-    }
+    const member = interaction.member as GuildMember;
 
-    // 채널 파싱
-    const args = message.content.trim().split(/\s+/);
-    const channelArg = args[2];
-    if (!channelArg) {
-      message.reply('Please specify a text channel.');
-      return;
-    }
-
-    let channel = null;
-    const channelIdMatch = channelArg.match(/^<#(\d+)>$/);
-    if (channelIdMatch) {
-      channel = message.guild.channels.cache.get(channelIdMatch[1]);
-    } else {
-      channel = message.guild.channels.cache.get(channelArg);
-    }
-
-    if (!channel || channel.type !== 0) { // type 0 = GUILD_TEXT
-      message.reply('Please specify a valid text channel.');
-      return;
-    }
-    const textChannel = channel as TextChannel;
-
-    // verified 역할 찾기 또는 생성
-    let verifiedRole = message.guild.roles.cache.find(r => r.name.toLowerCase() === VERIFIED_ROLE_NAME.toLowerCase());
-    if (!verifiedRole) {
-      try {
-        verifiedRole = await message.guild.roles.create({
-          name: VERIFIED_ROLE_NAME,
-          reason: 'Role for verified users',
-        });
-      } catch (e) {
-        console.error('Failed to create verified role:', e);
-        message.reply('Failed to create verified role.');
-        return;
+    // 현재 어떤 단계까지 가지고 있는지 체크
+    let currentStage = -1;
+    for (let i = VERIFY_STAGES.length - 1; i >= 0; i--) {
+      if (member.roles.cache.some(r => r.name.toLowerCase() === VERIFY_STAGES[i].toLowerCase())) {
+        currentStage = i;
+        break;
       }
     }
 
-    try {
-      const sentMessage = await textChannel.send('React with any emoji to get verified');
-      verifyMessageId = sentMessage.id;
-      verifiedRoleId = verifiedRole.id;
+    // 다음 단계 계산
+    const nextStage = Math.min(currentStage + 1, VERIFY_STAGES.length - 1);
+    const roleName = VERIFY_STAGES[nextStage];
 
-      message.reply(`Verification setup completed in ${textChannel.toString()}`);
-    } catch (e) {
-      console.error('Failed to send verification message:', e);
-      message.reply('Failed to send verification message.');
+    // 역할 찾기 또는 생성
+    let role = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
+    if (!role) {
+      role = await interaction.guild.roles.create({
+        name: roleName,
+        reason: 'Verification stage role'
+      });
+    }
+
+    // 역할 부여
+    if (!member.roles.cache.has(role.id)) {
+      await member.roles.add(role);
     }
   }
 });
