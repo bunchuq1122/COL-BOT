@@ -279,6 +279,7 @@ client.on('interactionCreate', async (interaction) => {
   });
   savePending(pendings);
 
+  const channel = interaction.channel as TextChannel | null;
   // 가상 포스트 링크 생성
   let threadUrl = `https://discord.com/channels/${interaction.guildId}/${channel?.parentId ?? ''}/${postIdOrTag}`;
 
@@ -292,7 +293,7 @@ client.on('interactionCreate', async (interaction) => {
     .setColor('#00FF00')
     .setTimestamp();
 
-  const channel = interaction.channel as TextChannel | null;
+  
 if (channel) {
   await channel.send({ embeds: [embed] });
 } else {
