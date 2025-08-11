@@ -10,7 +10,17 @@ import {
 } from 'discord.js';
 import * as dotenv from 'dotenv';
 import { env } from 'process';
+import http from 'http';
 dotenv.config();
+
+const port = process.env.PORT || 3000;
+
+http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Bot is running');
+}).listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
 
 const client = new Client({
   intents: [
