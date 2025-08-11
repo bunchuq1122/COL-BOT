@@ -17,6 +17,21 @@ dotenv.config();
 // Create REST client for Discord API
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN!);
 
+// ====== Functions ======
+function parseArgs(content: string): string[] {
+  const regex = /"([^"]+)"|(\S+)/g;
+  const args: string[] = [];
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    if (match[1]) {
+      args.push(match[1]); // 큰따옴표 안 문자열
+    } else if (match[2]) {
+      args.push(match[2]); // 공백 없는 단어
+    }
+  }
+  return args;
+}
+
 // ====== Global Command Deletion ======
 (async () => {
   try {
@@ -144,8 +159,6 @@ client.on('interactionCreate', async (interaction) => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (!message.guild) return;
-
-  // Only allowed guild
   if (message.guild.id !== process.env.GUILD_ID) return;
 
   const PREFIX = '!say';
@@ -154,26 +167,27 @@ client.on('messageCreate', async (message) => {
   const member = message.member;
   if (!member) return;
 
-  // Base role check
   const baseRoleName = process.env.MANAGER || '';
   const baseRole = message.guild.roles.cache.find(r => r.name === baseRoleName);
   if (!baseRole) {
     message.reply(`Base role "${baseRoleName}" not found.`);
     return;
   }
-
   if (member.roles.highest.position < baseRole.position) {
     message.reply('❌ You do not have permission to use this command.');
     return;
   }
 
-  const args = message.content.trim().split(/\s+/);
-  if (args.length < 3) {
+  // PREFIX 제거 후 args 파싱
+  const rawArgs = message.content.slice(PREFIX.length).trim();
+  const args = parseArgs(rawArgs);
+
+  if (args.length < 2) {
     message.reply('❌ Usage: !say [channelMention/channelID] [content] [title(optional)] [description(optional)]');
     return;
   }
 
-  const channelArg = args[1];
+  const channelArg = args[0];
   let targetChannel: TextChannel | null = null;
 
   const mentionMatch = channelArg.match(/^<#(\d+)>$/);
@@ -188,27 +202,24 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  const content = args[2];
-const title = args[3] || '';
-const description = args[4] || '';
+  const content = args[1];
+  const title = args[2] || '';
+  const description = args[3] || '';
 
-const embed = new EmbedBuilder()
-  .setColor('#5865F2') // Discord blue
-  .setDescription(`**${content}**`); // 본문 강조
+  const embed = new EmbedBuilder()
+    .setColor('#5865F2')
+    .setDescription(`**${content}**`);
 
-if (title) {
-  embed.setTitle(`📢 ${title}`); // 상단 제목
-}
-
-if (description) {
-  embed.setFooter({
-    text: description,
-    iconURL: message.client.user?.displayAvatarURL() || undefined
-  });
-}
-
-embed.setTimestamp();
-
+  if (title) {
+    embed.setTitle(`📢 ${title}`);
+  }
+  if (description) {
+    embed.setFooter({
+      text: description,
+      iconURL: message.client.user?.displayAvatarURL() || undefined
+    });
+  }
+  embed.setTimestamp();
 
   try {
     await targetChannel.send({ embeds: [embed] });
