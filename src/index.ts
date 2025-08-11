@@ -130,6 +130,7 @@ client.once('ready', async () => {
   const guildId = process.env.GUILD_ID!;
   const guild = await client.guilds.fetch(guildId);
 
+
   const data = [
     new SlashCommandBuilder()
       .setName('verifyme')
@@ -137,10 +138,17 @@ client.once('ready', async () => {
       .toJSON()
   ];
 
-  await guild.commands.set(data);
-  console.log(`✅ Slash command registered in guild: ${guild.name}`);
-  await guild.commands.set([voteCommand, listCommand]);
-  console.log('Vote and List commands registered');
+  const commands = [
+  new SlashCommandBuilder()
+    .setName('verifyme')
+    .setDescription('Get verified (...What if you sennd this multiple times...?)')
+    .toJSON(),
+  voteCommand,
+  listCommand
+];
+
+  await guild.commands.set(commands);
+console.log(`✅ All slash commands registered in guild: ${guild.name}`);
 });
 
 // ====== Handle Slash Commands ======
