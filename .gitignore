@@ -1,3 +1,5 @@
-node_modules/
-.env
-dist/
+COL-BOT/
+  package.json
+  tsconfig.json
+  src/
+    index.ts
