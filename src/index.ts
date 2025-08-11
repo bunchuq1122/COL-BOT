@@ -113,10 +113,10 @@ const VERIFY_STAGES = [
 // ====== Accept Command ======
 const acceptCommand = new SlashCommandBuilder()
   .setName('accept')
-  .setDescription('Accept a level by post ID or tag')
+  .setDescription('Accept a level by Thread ID')
   .addStringOption(option => 
     option.setName('postid')
-      .setDescription('Post ID or Tag of the level to accept')
+      .setDescription('Thread ID of the level submission to accept')
       .setRequired(true)
   )
   .toJSON();
@@ -279,9 +279,13 @@ client.on('interactionCreate', async (interaction) => {
   });
   savePending(pendings);
 
+  // 가상 포스트 링크 생성
+  let threadUrl = `https://discord.com/channels/${interaction.guildId}/${channel?.parentId ?? ''}/${postIdOrTag}`;
+
   // 알림 메시지 (명령어 사용 채널)
   const embed = new EmbedBuilder()
-    .setTitle(`${postIdOrTag} has been accepted!`)
+    .setTitle(`Level accepted!`)
+    .setURL(threadUrl)
     .setDescription(`by <@${interaction.user.id}>`)
     .setThumbnail(thumbnailUrl)
     .setFooter({ text: 'Use /vote for This COOL Level!' })
