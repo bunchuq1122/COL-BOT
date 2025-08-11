@@ -146,10 +146,12 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // 비공개 응답 보내기
-    if (roleName == "verified ") {
+    if (roleName == "verified") {
       await interaction.editReply({ content: `✅ You are now verified!`});
-    }else {
+    }else if (roleName == "double verified" || roleName == "triple verified") {
       await interaction.editReply({ content: `You are now verified!...... more?`});
+    }else {
+      await interaction.editReply({ content: `YOU GOT ULTIMATELY VERIFIED!`});
     }
   }
 });
