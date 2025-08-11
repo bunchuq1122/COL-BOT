@@ -285,13 +285,13 @@ client.on('interactionCreate', async (interaction) => {
 
   // 알림 메시지 (명령어 사용 채널)
   const embed = new EmbedBuilder()
-    .setTitle(`Level accepted!`)
-    .setURL(threadUrl)
-    .setDescription(`by <@${interaction.user.id}>`)
-    .setThumbnail(thumbnailUrl)
-    .setFooter({ text: 'Use /vote for This COOL Level!' })
-    .setColor('#00FF00')
-    .setTimestamp();
+  .setTitle(`${threadUrl} has been accepted!`)
+  .setURL(threadUrl)
+  .setDescription(`by <@${interaction.user.id}>`)
+  .setThumbnail(thumbnailUrl)
+  .setFooter({ text: 'Use /vote for This COOL Level!' })
+  .setColor('#00FF00')
+  .setTimestamp();
 
   
 if (channel) {
