@@ -9,7 +9,6 @@ import {
   PartialUser 
 } from 'discord.js';
 import * as dotenv from 'dotenv';
-import { env } from 'process';
 import http from 'http';
 dotenv.config();
 
@@ -33,18 +32,53 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
-const VERIFIED_ROLE_NAME = 'verified'; // 부여할 역할 이름
-const BASE_ROLE_NAME = process.env.MANAGER;    // 기준 역할 이름 (수정 가능)
+const VERIFIED_ROLE_NAME = 'verified'; 
+const BASE_ROLE_NAME = process.env.MANAGER || ''; // 환경변수에서 불러옴
+
+let verifyMessageId: string | null = null;
+let verifiedRoleId: string | null = null;
 
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user?.tag}`);
+});
+
+client.on('messageReactionAdd', async (
+  reaction: MessageReaction | PartialMessageReaction,
+  user: User | PartialUser
+) => {
+  try {
+    if (reaction.partial) await reaction.fetch();
+    if (user.partial) await user.fetch();
+  } catch {
+    return;
+  }
+
+  if (user.bot) return;
+  if (!verifyMessageId) return;
+  if (reaction.message.id !== verifyMessageId) return;
+
+  const guild = reaction.message.guild;
+  if (!guild) return;
+
+  try {
+    const member = await guild.members.fetch(user.id);
+    if (!member) return;
+
+    if (!verifiedRoleId) return;
+    if (!member.roles.cache.has(verifiedRoleId)) {
+      await member.roles.add(verifiedRoleId);
+      console.log(`Added verified role to ${user.tag}`);
+    }
+  } catch (e) {
+    console.error('Error adding verified role:', e);
+  }
 });
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (!message.guild) return;
 
-  // 간단한 ping 명령어
+  // !ping 간단 테스트용
   if (message.content === '!ping') {
     message.reply('🏓 Pong!');
     return;
@@ -55,7 +89,7 @@ client.on('messageCreate', async (message) => {
     const member = message.member;
     if (!member) return;
 
-    // 기준 역할 찾기
+    // 기준 역할 가져오기
     const baseRole = message.guild.roles.cache.find(r => r.name === BASE_ROLE_NAME);
     if (!baseRole) {
       message.reply(`Base role "${BASE_ROLE_NAME}" not found.`);
@@ -84,7 +118,7 @@ client.on('messageCreate', async (message) => {
       channel = message.guild.channels.cache.get(channelArg);
     }
 
-    if (!channel || channel.type !== 0) {
+    if (!channel || channel.type !== 0) { // type 0 = GUILD_TEXT
       message.reply('Please specify a valid text channel.');
       return;
     }
@@ -98,39 +132,21 @@ client.on('messageCreate', async (message) => {
           name: VERIFIED_ROLE_NAME,
           reason: 'Role for verified users',
         });
-      } catch {
+      } catch (e) {
+        console.error('Failed to create verified role:', e);
         message.reply('Failed to create verified role.');
         return;
       }
     }
 
     try {
-      const verifyMessage = await textChannel.send('React to get verified');
-
-      client.on('messageReactionAdd', async (
-        reaction: MessageReaction | PartialMessageReaction,
-        user: User | PartialUser
-      ) => {
-        try {
-          if (reaction.partial) await reaction.fetch();
-          if (user.partial) await user.fetch();
-        } catch {
-          return;
-        }
-
-        if (user.bot) return;
-        if (reaction.message.id !== verifyMessage.id) return;
-
-        const guildMember = await reaction.message.guild?.members.fetch(user.id);
-        if (!guildMember) return;
-
-        if (!guildMember.roles.cache.has(verifiedRole!.id)) {
-          await guildMember.roles.add(verifiedRole!);
-        }
-      });
+      const sentMessage = await textChannel.send('React with any emoji to get verified');
+      verifyMessageId = sentMessage.id;
+      verifiedRoleId = verifiedRole.id;
 
       message.reply(`Verification setup completed in ${textChannel.toString()}`);
-    } catch {
+    } catch (e) {
+      console.error('Failed to send verification message:', e);
       message.reply('Failed to send verification message.');
     }
   }
