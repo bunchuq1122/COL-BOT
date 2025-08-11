@@ -223,7 +223,7 @@ client.on('messageCreate', async (message) => {
 
   try {
     await targetChannel.send({ embeds: [embed] });
-    await message.react('1026998763354607656');
+    await message.react('1404415892120539216');
   } catch (err) {
     console.error(err);
     message.reply('❌ Failed to send the message.');
