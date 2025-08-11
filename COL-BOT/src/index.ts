@@ -24,7 +24,7 @@ const client = new Client({
 });
 
 const VERIFIED_ROLE_NAME = 'verified'; // 부여할 역할 이름
-const BASE_ROLE_NAME = process.env.MANAGE;    // 기준 역할 이름 (수정 가능)
+const BASE_ROLE_NAME = process.env.MANAGER;    // 기준 역할 이름 (수정 가능)
 
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user?.tag}`);
