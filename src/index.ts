@@ -5,12 +5,37 @@ import {
   TextChannel,
   GuildMember,
   SlashCommandBuilder,
-  EmbedBuilder
+  EmbedBuilder,
+  REST,
+  Routes
 } from 'discord.js';
 import * as dotenv from 'dotenv';
 import http from 'http';
 
 dotenv.config();
+
+const rest = new REST({ version: '10' }).setToken(process.env.TOKEN!);
+
+(async () => {
+  try {
+    console.log('Fetching commands...');
+    const commands = await rest.get(
+      Routes.applicationCommands(process.env.CLIENT_ID!)
+    ) as any[];
+
+    console.log(`Found ${commands.length} commands:`);
+    for (const cmd of commands) {
+      console.log(`Deleting: ${cmd.name}`);
+      await rest.delete(
+        Routes.applicationCommand(process.env.CLIENT_ID!, cmd.id)
+      );
+    }
+
+    console.log('✅ All global commands deleted.');
+  } catch (error) {
+    console.error(error);
+  }
+})();
 
 // Simple HTTP server (for Render uptime pings)
 const port = process.env.PORT || 3000;
