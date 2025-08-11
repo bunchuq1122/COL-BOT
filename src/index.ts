@@ -100,9 +100,12 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    // 응답 대기 상태(비공개)
+    await interaction.deferReply({ ephemeral: true });
+
     const member = interaction.member as GuildMember;
 
-    // Check current verification stage
+    // 기존 역할 찾기
     let currentStage = -1;
     for (let i = VERIFY_STAGES.length - 1; i >= 0; i--) {
       if (member.roles.cache.some(r => r.name.toLowerCase() === VERIFY_STAGES[i].toLowerCase())) {
@@ -111,11 +114,10 @@ client.on('interactionCreate', async (interaction) => {
       }
     }
 
-    // Next stage
     const nextStage = Math.min(currentStage + 1, VERIFY_STAGES.length - 1);
     const roleName = VERIFY_STAGES[nextStage];
 
-    // Find or create role
+    // 역할 찾거나 생성
     let role = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
     if (!role) {
       role = await interaction.guild.roles.create({
@@ -124,12 +126,19 @@ client.on('interactionCreate', async (interaction) => {
       });
     }
 
-    // Add role if not already owned
     if (!member.roles.cache.has(role.id)) {
       await member.roles.add(role);
     }
+
+    // 비공개 응답 보내기
+    if (roleName == "verified ") {
+      await interaction.editReply({ content: `✅ You are now verified!`});
+    }else {
+      await interaction.editReply({ content: `You are now verified!...... more?`});
+    }
   }
 });
+
 
 // ====== !say Command ======
 client.on('messageCreate', async (message) => {
