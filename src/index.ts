@@ -93,7 +93,7 @@ client.once('ready', async () => {
   const data = [
     new SlashCommandBuilder()
       .setName('verifyme')
-      .setDescription('Get verified (and fun titles if you run it multiple times!)')
+      .setDescription('Get verified (...What if you sennd this multiple times...?)')
       .toJSON()
   ];
 
@@ -223,7 +223,7 @@ client.on('messageCreate', async (message) => {
 
   try {
     await targetChannel.send({ embeds: [embed] });
-    message.reply(`✅ Message sent to ${targetChannel.toString()}`);
+    await message.react('1026998763354607656');
   } catch (err) {
     console.error(err);
     message.reply('❌ Failed to send the message.');
