@@ -280,13 +280,14 @@ client.on('interactionCreate', async (interaction) => {
   savePending(pendings);
 
   const channel = interaction.channel as TextChannel | null;
+  const forumChannelId = process.env.FORUM_CHANNEL_ID || '';
+
   // 가상 포스트 링크 생성
-  let threadUrl = `https://discord.com/channels/${interaction.guildId}/${channel?.parentId ?? ''}/${postIdOrTag}`;
+  let threadUrl = `https://discord.com/channels/${interaction.guildId}/${forumChannelId}/${postIdOrTag}`;
 
   // 알림 메시지 (명령어 사용 채널)
   const embed = new EmbedBuilder()
   .setTitle(`${threadUrl} has been accepted!`)
-  .setURL(threadUrl)
   .setDescription(`by <@${interaction.user.id}>`)
   .setThumbnail(thumbnailUrl)
   .setFooter({ text: 'Use /vote for This COOL Level!' })
