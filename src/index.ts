@@ -283,7 +283,7 @@ client.on('interactionCreate', async (interaction) => {
   const forumChannelId = process.env.FORUM_CHANNEL_ID || '';
 
   // 가상 포스트 링크 생성
-  let threadUrl = `https://discord.com/channels/${interaction.guildId}/${forumChannelId}/${postIdOrTag}`;
+  const threadUrl = `https://discord.com/channels/${interaction.guildId}/${forumChannelId}/${postIdOrTag}`;
 
   // 알림 메시지 (명령어 사용 채널)
   const embed = new EmbedBuilder()
