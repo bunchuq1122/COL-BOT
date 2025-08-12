@@ -12,8 +12,6 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  REST,
-  Routes,
   Interaction,
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
@@ -27,53 +25,39 @@ import path from 'path';
 import { google } from 'googleapis';
 import { docs_v1 } from 'googleapis';
 
-
 dotenv.config();
 
 /**
- * Required env variables (set these in Render dashboard):
+ * Required env variables:
  * TOKEN, CLIENT_ID, GUILD_ID, MANAGER, VOTE_PERM_ROLE, VOTING_CHANNEL_ID, FORUM_CHANNEL_ID
  * GOOGLE_SERVICE_ACCOUNT (JSON string of service account creds)
- * optional: GOOGLE_DRIVE_FILE_ID, REACTION_EMOJI_ID
+ * GOOGLE_DOC_ID (Google Docs ID to save/load pending data)
+ * optional: REACTION_EMOJI_ID
  */
 
-// ---------------- Google Drive setup ----------------
-const DRIVE_FILE_NAME = 'pending.json';
+// ---------------- Google Docs setup ----------------
 const GOOGLE_SERVICE_ACCOUNT = process.env.GOOGLE_SERVICE_ACCOUNT;
-if (!GOOGLE_SERVICE_ACCOUNT) {
-  console.error('Missing GOOGLE_SERVICE_ACCOUNT env var. Storing pending locally will be used as fallback.');
-}
-
-let driveFileId = process.env.GOOGLE_DRIVE_FILE_ID || null;
-let drive: any = null;
 let authClient: any = null;
-
 let docs: docs_v1.Docs | null = null;
 const googleDocId = process.env.GOOGLE_DOC_ID || null;
-
 
 if (GOOGLE_SERVICE_ACCOUNT) {
   try {
     const creds = JSON.parse(GOOGLE_SERVICE_ACCOUNT);
     authClient = new google.auth.JWT({
-    email: creds.client_email,
-    key: creds.private_key,
-    scopes: [
-      'https://www.googleapis.com/auth/documents',
-      'https://www.googleapis.com/auth/drive.file',
-    ],
-  } as any);
-    drive = google.drive({ version: 'v3', auth: authClient });
+      email: creds.client_email,
+      key: creds.private_key,
+      scopes: ['https://www.googleapis.com/auth/documents'],
+    } as any);
     if (authClient && googleDocId) {
       docs = google.docs({ version: 'v1', auth: authClient });
     }
   } catch (e) {
     console.error('Failed to init Google service account:', e);
-    drive = null;
   }
 }
 
-// local fallback path (if Google Drive not available)
+// local fallback path (if Google Docs not available)
 const LOCAL_PENDING_PATH = path.resolve('./pending.json');
 
 // ---------------- types ----------------
@@ -91,37 +75,6 @@ type PendingLevel = {
 };
 
 // ---------------- helper: load/save pending ----------------
-async function ensureDriveFile(): Promise<void> {
-  if (!drive) return;
-  if (driveFileId) return;
-
-  // try find file
-  const res = await drive.files.list({
-    q: `name='${DRIVE_FILE_NAME}' and trashed=false`,
-    fields: 'files(id, name)',
-    spaces: 'drive'
-  });
-  if (res.data.files && res.data.files.length > 0) {
-    driveFileId = res.data.files[0].id!;
-    return;
-  }
-
-  // create file
-  const createRes = await drive.files.create({
-    requestBody: {
-      name: DRIVE_FILE_NAME,
-      mimeType: 'application/json'
-    },
-    media: {
-      mimeType: 'application/json',
-      body: JSON.stringify([], null, 2)
-    },
-    fields: 'id'
-  });
-  driveFileId = createRes.data.id!;
-  console.log('Created drive file id:', driveFileId);
-}
-
 async function loadPending(): Promise<PendingLevel[]> {
   if (docs && googleDocId) {
     try {
@@ -144,7 +97,7 @@ async function loadPending(): Promise<PendingLevel[]> {
     }
   }
 
-  // 로컬 fallback
+  // local fallback
   if (fs.existsSync(LOCAL_PENDING_PATH)) {
     try {
       const raw = fs.readFileSync(LOCAL_PENDING_PATH, 'utf8');
@@ -159,45 +112,38 @@ async function loadPending(): Promise<PendingLevel[]> {
 async function savePending(data: PendingLevel[]) {
   if (docs && googleDocId) {
     try {
-      // 문서 전체 길이 가져오기
       const doc = await docs.documents.get({ documentId: googleDocId });
       const content = doc.data.body?.content;
       const endIndex = content ? content[content.length - 1].endIndex || 1 : 1;
 
       const requests: docs_v1.Schema$Request[] = [];
 
-      // 문서 내용 전체 삭제 (본문 1부터 끝까지)
       if (endIndex > 1) {
         requests.push({
           deleteContentRange: {
-            range: {
-              startIndex: 1,
-              endIndex: endIndex - 1,
-            }
-          }
+            range: { startIndex: 1, endIndex: endIndex - 1 },
+          },
         });
       }
 
-      // 새 JSON 텍스트 삽입
       requests.push({
         insertText: {
           text: JSON.stringify(data, null, 2),
-          location: { index: 1 }
-        }
+          location: { index: 1 },
+        },
       });
 
       await docs.documents.batchUpdate({
         documentId: googleDocId,
-        requestBody: { requests }
+        requestBody: { requests },
       });
-
       return;
     } catch (e) {
       console.error('Failed to save pending to Google Docs:', e);
     }
   }
 
-  // 로컬 fallback
+  // local fallback
   try {
     fs.writeFileSync(LOCAL_PENDING_PATH, JSON.stringify(data, null, 2), 'utf8');
   } catch (e) {
@@ -255,27 +201,26 @@ const VERIFY_STAGES = ['verified', 'double verified', 'triple verified', 'ultima
 
 // once ready: register commands
 client.once('ready', async () => {
-  console.log('✅Logged in as', client.user?.tag);
+  console.log('✅ Logged in as', client.user?.tag);
   const guildId = process.env.GUILD_ID!;
   const guild = await client.guilds.fetch(guildId);
 
   const cmds = [verifyCmd, acceptCmd, voteCmd, listCmd];
   await guild.commands.set(cmds);
-  console.log('✅Registered commands in guild', guild.name);
+  console.log('✅ Registered commands in guild', guild.name);
 });
 
 // single interaction handler for commands / select / modal
 client.on('interactionCreate', async (interaction: Interaction) => {
-  // Slash commands
   if (interaction.isChatInputCommand()) {
     const ctx = interaction as ChatInputCommandInteraction;
-    // restrict to guild
+
     if (ctx.guildId !== process.env.GUILD_ID) {
       await ctx.reply({ content: 'This command only works in the allowed server.', ephemeral: true });
       return;
     }
 
-    // ---------- verifyme ----------
+    // --- verifyme ---
     if (ctx.commandName === 'verifyme') {
       await ctx.deferReply({ ephemeral: true });
       const member = ctx.member as GuildMember;
@@ -305,9 +250,8 @@ client.on('interactionCreate', async (interaction: Interaction) => {
       return;
     }
 
-    // ---------- accept ----------
+    // --- accept ---
     if (ctx.commandName === 'accept') {
-      // permission: MANAGER role
       const managerRoleName = process.env.MANAGER || '';
       const member = ctx.member as GuildMember;
       if (!member.roles.cache.some(r => r.name === managerRoleName)) {
@@ -317,29 +261,23 @@ client.on('interactionCreate', async (interaction: Interaction) => {
       await ctx.deferReply({ ephemeral: true });
 
       const postId = ctx.options.getString('postid', true).trim();
-      // load pending
       const pendings = await loadPending();
       if (pendings.find(p => p.postIdOrTag === postId)) {
         await ctx.editReply('This thread is already accepted.');
         return;
       }
 
-      // attempt to fetch thread and get thumbnail & thread info
       let thumbnailUrl = 'https://via.placeholder.com/150';
       let levelName = postId;
       try {
         const fetched = await client.channels.fetch(postId);
         if (fetched && fetched.isThread()) {
           const thread = fetched;
-          // threadName
           levelName = thread.name ?? postId;
-          // starter message
           const starter = await (thread as any).fetchStarterMessage().catch(() => null);
           if (starter) {
-            // attachments
             const img = starter.attachments.find((a: any) => a.contentType?.startsWith('image/'));
             if (img) thumbnailUrl = img.url;
-            // embeds
             else if (starter.embeds.length > 0) {
               const e = starter.embeds[0];
               thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
@@ -350,7 +288,6 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         console.log('fetch thread failed or not thread:', e);
       }
 
-      // save pending
       pendings.push({
         postIdOrTag: postId,
         levelName,
@@ -360,11 +297,9 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         votes: { song: [], design: [], vibe: [] }
       });
 
-      // pendings 저장 (Google Drive로 저장, 실패 시 로컬에 저장하는 savePending 사용)
       await savePending(pendings);
       console.log('Pending levels saved:', pendings.length);
 
-      // build thread URL using FORUM_CHANNEL_ID env (recommended)
       const forumChannelId = process.env.FORUM_CHANNEL_ID || '';
       const threadUrl = `https://discord.com/channels/${ctx.guildId}/${forumChannelId || (ctx.guildId ?? '')}/${postId}`;
 
@@ -377,7 +312,6 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         .setColor('#00FF00')
         .setTimestamp();
 
-      // send to the channel where command was used (if supports send)
       const ch = ctx.channel as TextChannel | null;
       if (ch?.isTextBased && ch.isTextBased()) {
         await ch.send({ embeds: [embed] });
@@ -389,9 +323,8 @@ client.on('interactionCreate', async (interaction: Interaction) => {
       return;
     }
 
-    // ---------- vote ----------
+    // --- vote ---
     if (ctx.commandName === 'vote') {
-      // permission: role + channel restriction
       const roleName = process.env.VOTE_PERM_ROLE || 'vote perm';
       const voteRole = ctx.guild!.roles.cache.find(r => r.name === roleName);
       const member = ctx.member as GuildMember;
@@ -411,7 +344,6 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         return;
       }
 
-      // build select menu
       const options = pendings.slice(0, 25).map(p => ({
         label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
         description: p.postIdOrTag,
@@ -429,7 +361,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
       return;
     }
 
-    // ---------- list ----------
+    // --- list ---
     if (ctx.commandName === 'list') {
       await ctx.deferReply({ ephemeral: true });
       const pendings = await loadPending();
@@ -458,12 +390,11 @@ client.on('interactionCreate', async (interaction: Interaction) => {
     }
   }
 
-  // --------------- component interactions: select menu ---------------
+  // component: select menu (vote select)
   if (interaction.isStringSelectMenu()) {
     const sel = interaction as StringSelectMenuInteraction;
     if (sel.customId === 'vote_select_level') {
       const selectedId = sel.values[0];
-      // show modal to collect 3 scores
       const modal = new ModalBuilder()
         .setCustomId(`vote_modal_${selectedId}`)
         .setTitle('Vote (1-10)');
@@ -500,7 +431,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
     }
   }
 
-  // --------------- modal submit ---------------
+  // modal submit (vote)
   if (interaction.isModalSubmit()) {
     const modal = interaction as ModalSubmitInteraction;
     if (!modal.customId.startsWith('vote_modal_')) return;
