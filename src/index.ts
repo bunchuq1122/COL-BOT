@@ -214,13 +214,13 @@ const VERIFY_STAGES = ['verified', 'double verified', 'triple verified', 'ultima
 
 // once ready: register commands
 client.once('ready', async () => {
-  console.log('Logged in as', client.user?.tag);
+  console.log('✅Logged in as', client.user?.tag);
   const guildId = process.env.GUILD_ID!;
   const guild = await client.guilds.fetch(guildId);
 
   const cmds = [verifyCmd, acceptCmd, voteCmd, listCmd];
   await guild.commands.set(cmds);
-  console.log('Registered commands in guild', guild.name);
+  console.log('✅Registered commands in guild', guild.name);
 });
 
 // single interaction handler for commands / select / modal
@@ -421,7 +421,6 @@ client.on('interactionCreate', async (interaction: Interaction) => {
   if (interaction.isStringSelectMenu()) {
     const sel = interaction as StringSelectMenuInteraction;
     if (sel.customId === 'vote_select_level') {
-      await sel.deferReply({ ephemeral: true });
       const selectedId = sel.values[0];
       // show modal to collect 3 scores
       const modal = new ModalBuilder()
