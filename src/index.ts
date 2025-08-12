@@ -329,41 +329,61 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 
     // --- vote ---
     if (ctx.commandName === 'vote') {
-      const roleName = process.env.VOTE_PERM_ROLE || 'vote perm';
-      const voteRole = ctx.guild!.roles.cache.find(r => r.name === roleName);
-      const member = ctx.member as GuildMember;
-      if (!voteRole || !member.roles.cache.has(voteRole.id)) {
+    const roleName = process.env.VOTE_PERM_ROLE || 'vote perm';
+    const voteRole = ctx.guild!.roles.cache.find(r => r.name === roleName);
+    const member = ctx.member as GuildMember;
+
+    if (!voteRole || !member.roles.cache.has(voteRole.id)) {
+      // 아직 응답 안 했으면 reply, 이미 했다면 followUp 하는 안전처리도 가능
+      if (ctx.replied || ctx.deferred) {
+        await ctx.followUp({ content: 'You do not have permission to vote.', ephemeral: true });
+      } else {
         await ctx.reply({ content: 'You do not have permission to vote.', ephemeral: true });
-        return;
       }
-      const votingChannelId = process.env.VOTING_CHANNEL_ID;
-      if (votingChannelId && ctx.channelId !== votingChannelId) {
-        await ctx.reply({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
-        return;
-      }
-
-      const pendings = await loadPending();
-      if (pendings.length === 0) {
-        await ctx.reply({ content: 'No pending levels to vote.', ephemeral: true });
-        return;
-      }
-
-      const options = pendings.slice(0, 25).map(p => ({
-        label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
-        description: p.postIdOrTag,
-        value: p.postIdOrTag
-      }));
-
-      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId('vote_select_level')
-          .setPlaceholder('Choose a level to vote')
-          .addOptions(options)
-      );
-
-      await ctx.reply({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
       return;
     }
+
+    const votingChannelId = process.env.VOTING_CHANNEL_ID;
+    if (votingChannelId && ctx.channelId !== votingChannelId) {
+      if (ctx.replied || ctx.deferred) {
+        await ctx.followUp({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
+      } else {
+        await ctx.reply({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
+      }
+      return;
+    }
+
+    const pendings = await loadPending();
+    if (pendings.length === 0) {
+      if (ctx.replied || ctx.deferred) {
+        await ctx.followUp({ content: 'No pending levels to vote.', ephemeral: true });
+      } else {
+        await ctx.reply({ content: 'No pending levels to vote.', ephemeral: true });
+      }
+      return;
+    }
+
+    const options = pendings.slice(0, 25).map(p => ({
+      label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
+      description: p.postIdOrTag,
+      value: p.postIdOrTag
+    }));
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('vote_select_level')
+        .setPlaceholder('Choose a level to vote')
+        .addOptions(options)
+    );
+
+    if (ctx.replied || ctx.deferred) {
+      await ctx.followUp({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
+    } else {
+      await ctx.reply({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
+    }
+    return;
+    }
+
 
     // --- list ---
     if (ctx.commandName === 'list') {
