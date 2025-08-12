@@ -514,7 +514,7 @@ client.on('messageCreate', async (message: Message) => {
   const raw = message.content.slice(PREFIX.length).trim();
   const args = parseArgs(raw);
   if (args.length < 2) {
-    await message.reply('❌ Usage: !say [#channel or channelID] "content" "title(optional)" "description(optional)"');
+    await message.reply('❌ Usage: !say [#channel or channelID] "content" "title(optional)" "description(optional)" "imageURL(optional)" "color(optional)"');
     return;
   }
 
@@ -531,14 +531,21 @@ client.on('messageCreate', async (message: Message) => {
   const content = args[1];
   const title = args[2] || '';
   const description = args[3] || '';
+  const imageUrl = args[4] || '';
+  const colorInput = args[5] || '#5865F2'; // 기본 색상
+
+  // 색상 문자열이 #로 시작하고 6자리 16진수인지 확인 후 아니면 기본색
+  const isValidHexColor = /^#([0-9A-F]{6}|[0-9A-F]{3})$/i.test(colorInput);
+  const embedColor = isValidHexColor ? parseInt(colorInput.replace('#', ''), 16) : 0x5865F2;
 
   const embed = new EmbedBuilder()
-    .setColor('#5865F2')
+    .setColor(embedColor)
     .setDescription(`**${content}**`)
     .setTimestamp();
 
   if (title) embed.setTitle(`📢 ${title}`);
   if (description) embed.setFooter({ text: description, iconURL: client.user?.displayAvatarURL() ?? undefined });
+  if (imageUrl) embed.setImage(imageUrl);
 
   try {
     await target.send({ embeds: [embed] });
@@ -553,6 +560,7 @@ client.on('messageCreate', async (message: Message) => {
     await message.reply('❌ Failed to send message.');
   }
 });
+
 
 // ---------------- start HTTP server for uptime ping ----------------
 const port = process.env.PORT || 3000;
