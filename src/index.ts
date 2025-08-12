@@ -645,6 +645,33 @@ client.on('messageCreate', async (message: Message) => {
   }
 });
 
+client.on('messageCreate', async (message: Message) => {
+  if (message.author.bot) return;
+  if (!message.guild) return;
+
+  const PREFIX = '!fuckrozy';
+  if (!message.content.startsWith(PREFIX)) return;
+
+  const member = message.member;
+  if (!member) return;
+
+  // 특정 역할 이름
+  const roleName = process.env.FUCKROZY_ROLE || '';
+  const role = message.guild.roles.cache.find(r => r.name === roleName);
+
+  if (!role) {
+    await message.reply(`can't find "${roleName}"`);
+    return;
+  }
+
+  if (!member.roles.cache.has(role.id)) {
+    await message.reply('❌ You do not have permission to fuck rrozy!');
+    return;
+  }
+  if (message.channel.isTextBased()) {
+    await (message.channel as TextChannel).send('<@rrozy> got fucked by ${member.nickname}');
+  }
+});
 
 // ---------------- start HTTP server for uptime ping ----------------
 const port = process.env.PORT || 3000;
