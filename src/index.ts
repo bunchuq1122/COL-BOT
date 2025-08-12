@@ -16,7 +16,8 @@ import {
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
   ModalSubmitInteraction,
-  Message
+  Message,
+  roleMention
 } from 'discord.js';
 import * as dotenv from 'dotenv';
 import http from 'http';
@@ -493,11 +494,11 @@ client.on('messageCreate', async (message: Message) => {
     const threadUrl = `https://discord.com/channels/${message.guild.id}/${process.env.FORUM_CHANNEL_ID || message.guild.id}/${threadId}`;
 
     const embed = new EmbedBuilder()
-      .setTitle(`${levelName} has been accepted!`)
+      .setTitle(`'${levelName}' has been accepted!`)
       .setURL(threadUrl)
       .setDescription(`by <@${message.author.id}>`)
       .setThumbnail(thumbnailUrl)
-      .setFooter({ text: 'Use /vote for This COOL Level! @voting notification'})
+      .setFooter({ text: 'Use /vote for This COOL Level!' + roleMention(process.env.VOTING_NOTIFICATION || 'voting notification') })
       .setColor('#00FF00')
       .setTimestamp();
 
