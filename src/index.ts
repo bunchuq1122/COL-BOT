@@ -668,10 +668,21 @@ client.on('messageCreate', async (message: Message) => {
     await message.reply('❌ You do not have permission to fuck rrozy!');
     return;
   }
+
+  // Parse number argument
+  const args = message.content.trim().split(/\s+/);
+  let count = 1;
+  if (args.length > 1) {
+    const n = parseInt(args[1], 10);
+    if (!isNaN(n) && n > 0) count = n;
+  }
+
+  const rrozyMention = roleMention(process.env.RROZY || '1404793396404682793');
   if (message.channel.isTextBased()) {
-    await (message.channel as TextChannel).send(roleMention(process.env.RROZY || 'rrozy')+ ' ' + 'got fucked by' + ' '+ member.toString());
+    await (message.channel as TextChannel).send(`${rrozyMention} fucked by ${member.toString()} ${count} times!`);
   }
 });
+
 
 // ---------------- start HTTP server for uptime ping ----------------
 const port = process.env.PORT || 3000;
