@@ -669,7 +669,7 @@ client.on('messageCreate', async (message: Message) => {
     return;
   }
   if (message.channel.isTextBased()) {
-    await (message.channel as TextChannel).send('<@rrozy> got fucked by ${member.nickname}');
+    await (message.channel as TextChannel).send(roleMention('rrozy') + 'got fucked by' + member.nickname);
   }
 });
 
