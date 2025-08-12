@@ -25,6 +25,8 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { google } from 'googleapis';
+import { docs_v1 } from 'googleapis';
+
 
 dotenv.config();
 
@@ -45,6 +47,13 @@ if (!GOOGLE_SERVICE_ACCOUNT) {
 let driveFileId = process.env.GOOGLE_DRIVE_FILE_ID || null;
 let drive: any = null;
 let authClient: any = null;
+
+let docs: docs_v1.Docs | null = null;
+const googleDocId = process.env.GOOGLE_DOC_ID || null;
+
+if (authClient && googleDocId) {
+  docs = google.docs({ version: 'v1', auth: authClient });
+}
 
 if (GOOGLE_SERVICE_ACCOUNT) {
   try {
@@ -111,52 +120,81 @@ async function ensureDriveFile(): Promise<void> {
 }
 
 async function loadPending(): Promise<PendingLevel[]> {
-  // prefer Drive
-  if (drive) {
+  if (docs && googleDocId) {
     try {
-      await ensureDriveFile();
-      const resp = await drive.files.get(
-        { fileId: driveFileId!, alt: 'media' },
-        { responseType: 'text' }
-      );
-      const txt = resp.data as string;
-      return JSON.parse(txt || '[]') as PendingLevel[];
+      const res = await docs.documents.get({ documentId: googleDocId });
+      const content = res.data.body?.content;
+      if (!content) return [];
+
+      let fullText = '';
+      for (const element of content) {
+        if (element.paragraph) {
+          for (const elem of element.paragraph.elements || []) {
+            if (elem.textRun?.content) fullText += elem.textRun.content;
+          }
+        }
+      }
+
+      return JSON.parse(fullText.trim() || '[]') as PendingLevel[];
     } catch (e) {
-      console.error('Failed to load pending from Drive, falling back to local:', e);
+      console.error('Failed to load pending from Google Docs:', e);
     }
   }
 
-  // local fallback
+  // 로컬 fallback
   if (fs.existsSync(LOCAL_PENDING_PATH)) {
     try {
       const raw = fs.readFileSync(LOCAL_PENDING_PATH, 'utf8');
       return JSON.parse(raw) as PendingLevel[];
     } catch (e) {
       console.error('Failed to read local pending.json:', e);
-      return [];
     }
   }
   return [];
 }
 
 async function savePending(data: PendingLevel[]) {
-  if (drive) {
+  if (docs && googleDocId) {
     try {
-      await ensureDriveFile();
-      await drive.files.update({
-        fileId: driveFileId!,
-        media: {
-          mimeType: 'application/json',
-          body: JSON.stringify(data, null, 2)
+      // 문서 전체 길이 가져오기
+      const doc = await docs.documents.get({ documentId: googleDocId });
+      const content = doc.data.body?.content;
+      const endIndex = content ? content[content.length - 1].endIndex || 1 : 1;
+
+      const requests: docs_v1.Schema$Request[] = [];
+
+      // 문서 내용 전체 삭제 (본문 1부터 끝까지)
+      if (endIndex > 1) {
+        requests.push({
+          deleteContentRange: {
+            range: {
+              startIndex: 1,
+              endIndex: endIndex - 1,
+            }
+          }
+        });
+      }
+
+      // 새 JSON 텍스트 삽입
+      requests.push({
+        insertText: {
+          text: JSON.stringify(data, null, 2),
+          location: { index: 1 }
         }
       });
+
+      await docs.documents.batchUpdate({
+        documentId: googleDocId,
+        requestBody: { requests }
+      });
+
       return;
     } catch (e) {
-      console.error('Failed to save pending to Drive, fallback to local:', e);
+      console.error('Failed to save pending to Google Docs:', e);
     }
   }
 
-  // local fallback
+  // 로컬 fallback
   try {
     fs.writeFileSync(LOCAL_PENDING_PATH, JSON.stringify(data, null, 2), 'utf8');
   } catch (e) {
