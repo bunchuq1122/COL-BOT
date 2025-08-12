@@ -655,7 +655,7 @@ client.on('messageCreate', async (message: Message) => {
   const member = message.member;
   if (!member) return;
 
-  // 특정 역할 이름
+  // name of role
   const roleName = process.env.FUCKROZY_ROLE || '';
   const role = message.guild.roles.cache.find(r => r.name === roleName);
 
@@ -674,7 +674,7 @@ client.on('messageCreate', async (message: Message) => {
   let count = 1;
   if (args.length > 1) {
     const n = parseInt(args[1], 10);
-    if (!isNaN(n) && n > 0) count = n;
+    if (!n) count = n;
   }
 
   const rrozyMention = roleMention(process.env.RROZY || '1404793396404682793');
