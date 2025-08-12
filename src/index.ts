@@ -46,8 +46,11 @@ if (GOOGLE_SERVICE_ACCOUNT) {
     const creds = JSON.parse(GOOGLE_SERVICE_ACCOUNT);
     authClient = new google.auth.JWT({
       email: creds.client_email,
-      key: creds.private_key,
-      scopes: ['https://www.googleapis.com/auth/documents'],
+      key: creds.private_key.replace(/\\n/g, '\n'), // 줄바꿈 변환 꼭 해주기
+      scopes: [
+        'https://www.googleapis.com/auth/documents',
+        'https://www.googleapis.com/auth/drive.file',
+      ],
     } as any);
     if (authClient && googleDocId) {
       docs = google.docs({ version: 'v1', auth: authClient });
@@ -56,6 +59,7 @@ if (GOOGLE_SERVICE_ACCOUNT) {
     console.error('Failed to init Google service account:', e);
   }
 }
+
 
 // local fallback path (if Google Docs not available)
 const LOCAL_PENDING_PATH = path.resolve('./pending.json');
