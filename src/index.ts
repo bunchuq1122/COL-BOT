@@ -497,7 +497,7 @@ client.on('messageCreate', async (message: Message) => {
       .setURL(threadUrl)
       .setDescription(`by <@${message.author.id}>`)
       .setThumbnail(thumbnailUrl)
-      .setFooter({ text: 'Use /vote for This COOL Level!' })
+      .setFooter({ text: 'Use /vote for This COOL Level! @voting notification'})
       .setColor('#00FF00')
       .setTimestamp();
 
@@ -622,13 +622,13 @@ client.on('messageCreate', async (message: Message) => {
     .setDescription(`**${content}**`)
     .setTimestamp();
 
-  if (title) embed.setTitle(`📢 ${title}`);
-  if (description)
+  if (title && title != "" && title != " ") embed.setTitle(`📢 ${title}`);
+  if (description && description != "" && description != " ")
     embed.setFooter({
       text: description,
       iconURL: client.user?.displayAvatarURL() ?? undefined
     });
-  if (imageUrl) embed.setImage(imageUrl);
+  if (imageUrl && imageUrl != "" && imageUrl != " ") embed.setThumbnail(imageUrl);
 
   try {
     await target.send({ embeds: [embed] });
