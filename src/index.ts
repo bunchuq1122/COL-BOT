@@ -318,7 +318,10 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         ranks: [],
         votes: { song: [], design: [], vibe: [] }
       });
+
+      // pendings 저장 (Google Drive로 저장, 실패 시 로컬에 저장하는 savePending 사용)
       await savePending(pendings);
+      console.log('Pending levels saved:', pendings.length);
 
       // build thread URL using FORUM_CHANNEL_ID env (recommended)
       const forumChannelId = process.env.FORUM_CHANNEL_ID || '';
@@ -548,7 +551,7 @@ client.on('messageCreate', async (message: Message) => {
     if (emojiId) {
       await message.react(emojiId).catch(() => { /* ignore */ });
     } else {
-      await message.react('✅').catch(() => { /* ignore non-custom */ });
+      await message.react('1404415892120539216').catch(() => { /* ignore non-custom */ });
     }
   } catch (e) {
     console.error('!say send failed', e);
