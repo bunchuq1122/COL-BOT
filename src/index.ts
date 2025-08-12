@@ -534,9 +534,9 @@ client.on('messageCreate', async (message: Message) => {
   const imageUrl = args[4] || '';
   const colorInput = args[5] || '#5865F2'; // 기본 색상
 
-  // 색상 문자열이 #로 시작하고 6자리 16진수인지 확인 후 아니면 기본색
-  const isValidHexColor = /^#([0-9A-F]{6}|[0-9A-F]{3})$/i.test(colorInput);
-  const embedColor = isValidHexColor ? parseInt(colorInput.replace('#', ''), 16) : 0x5865F2;
+  const colorInputStr = (colorInput ?? '#5865F2').toString();
+  const isValidHexColor = /^#([0-9A-F]{6}|[0-9A-F]{3})$/i.test(colorInputStr);
+  const embedColor = isValidHexColor ? parseInt(colorInputStr.replace('#', ''), 16) : 0x5865F2;
 
   const embed = new EmbedBuilder()
     .setColor(embedColor)
@@ -545,7 +545,9 @@ client.on('messageCreate', async (message: Message) => {
 
   if (title) embed.setTitle(`📢 ${title}`);
   if (description) embed.setFooter({ text: description, iconURL: client.user?.displayAvatarURL() ?? undefined });
-  if (imageUrl) embed.setImage(imageUrl);
+  if (imageUrl && imageUrl.trim() !== '') {
+    embed.setImage(imageUrl);
+  }
 
   try {
     await target.send({ embeds: [embed] });
