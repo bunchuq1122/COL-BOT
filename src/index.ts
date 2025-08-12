@@ -671,10 +671,11 @@ client.on('messageCreate', async (message: Message) => {
 
   // Parse number argument
   const args = message.content.trim().split(/\s+/);
-  let count = 1;
+  let count: string | number = 1;
   if (args.length > 1) {
+    // 숫자면 숫자로, 아니면 문자열로
     const n = parseInt(args[1], 10);
-    if (!n) count = n;
+    count = isNaN(n) ? args[1] : n;
   }
 
   const rrozyMention = roleMention(process.env.RROZY || '1404793396404682793');
