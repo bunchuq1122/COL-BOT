@@ -1,3 +1,4 @@
+// src/index.ts
 import {
   Client,
   GatewayIntentBits,
@@ -6,92 +7,176 @@ import {
   GuildMember,
   SlashCommandBuilder,
   EmbedBuilder,
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   REST,
-  Routes
+  Routes,
+  Interaction,
+  ChatInputCommandInteraction,
+  StringSelectMenuInteraction,
+  ModalSubmitInteraction,
+  Message
 } from 'discord.js';
 import * as dotenv from 'dotenv';
 import http from 'http';
 import fs from 'fs';
-import path from 'path';  
+import path from 'path';
+import { google } from 'googleapis';
 
 dotenv.config();
 
-// Create REST client for Discord API
-const rest = new REST({ version: '10' }).setToken(process.env.TOKEN!);
+/**
+ * Required env variables (set these in Render dashboard):
+ * TOKEN, CLIENT_ID, GUILD_ID, MANAGER, VOTE_PERM_ROLE, VOTING_CHANNEL_ID, FORUM_CHANNEL_ID
+ * GOOGLE_SERVICE_ACCOUNT (JSON string of service account creds)
+ * optional: GOOGLE_DRIVE_FILE_ID, REACTION_EMOJI_ID
+ */
 
-// pending levels
-const PENDING_PATH = path.resolve('./pending.json');
+// ---------------- Google Drive setup ----------------
+const DRIVE_FILE_NAME = 'pending.json';
+const GOOGLE_SERVICE_ACCOUNT = process.env.GOOGLE_SERVICE_ACCOUNT;
+if (!GOOGLE_SERVICE_ACCOUNT) {
+  console.error('Missing GOOGLE_SERVICE_ACCOUNT env var. Storing pending locally will be used as fallback.');
+}
 
+let driveFileId = process.env.GOOGLE_DRIVE_FILE_ID || null;
+let drive: any = null;
+let authClient: any = null;
+
+if (GOOGLE_SERVICE_ACCOUNT) {
+  try {
+    const creds = JSON.parse(GOOGLE_SERVICE_ACCOUNT);
+    authClient = new google.auth.JWT({
+      email: creds.client_email,
+      key: creds.private_key,
+      scopes: ['https://www.googleapis.com/auth/drive.file'],
+    } as any);
+    drive = google.drive({ version: 'v3', auth: authClient });
+  } catch (e) {
+    console.error('Failed to init Google service account:', e);
+    drive = null;
+  }
+}
+
+// local fallback path (if Google Drive not available)
+const LOCAL_PENDING_PATH = path.resolve('./pending.json');
+
+// ---------------- types ----------------
 type PendingLevel = {
   postIdOrTag: string;
   levelName: string;
   authorId: string;
   thumbnailUrl?: string;
   ranks: number[];
-  votes?: {
+  votes: {
     song: number[];
     design: number[];
     vibe: number[];
-  }
+  };
 };
 
-function loadPending(): PendingLevel[] {
-  if (!fs.existsSync(PENDING_PATH)) return [];
-  const raw = fs.readFileSync(PENDING_PATH, 'utf-8');
-  return JSON.parse(raw);
+// ---------------- helper: load/save pending ----------------
+async function ensureDriveFile(): Promise<void> {
+  if (!drive) return;
+  if (driveFileId) return;
+
+  // try find file
+  const res = await drive.files.list({
+    q: `name='${DRIVE_FILE_NAME}' and trashed=false`,
+    fields: 'files(id, name)',
+    spaces: 'drive'
+  });
+  if (res.data.files && res.data.files.length > 0) {
+    driveFileId = res.data.files[0].id!;
+    return;
+  }
+
+  // create file
+  const createRes = await drive.files.create({
+    requestBody: {
+      name: DRIVE_FILE_NAME,
+      mimeType: 'application/json'
+    },
+    media: {
+      mimeType: 'application/json',
+      body: JSON.stringify([], null, 2)
+    },
+    fields: 'id'
+  });
+  driveFileId = createRes.data.id!;
+  console.log('Created drive file id:', driveFileId);
 }
 
-function savePending(data: PendingLevel[]) {
-  fs.writeFileSync(PENDING_PATH, JSON.stringify(data, null, 2), 'utf-8');
+async function loadPending(): Promise<PendingLevel[]> {
+  // prefer Drive
+  if (drive) {
+    try {
+      await ensureDriveFile();
+      const resp = await drive.files.get(
+        { fileId: driveFileId!, alt: 'media' },
+        { responseType: 'text' }
+      );
+      const txt = resp.data as string;
+      return JSON.parse(txt || '[]') as PendingLevel[];
+    } catch (e) {
+      console.error('Failed to load pending from Drive, falling back to local:', e);
+    }
+  }
+
+  // local fallback
+  if (fs.existsSync(LOCAL_PENDING_PATH)) {
+    try {
+      const raw = fs.readFileSync(LOCAL_PENDING_PATH, 'utf8');
+      return JSON.parse(raw) as PendingLevel[];
+    } catch (e) {
+      console.error('Failed to read local pending.json:', e);
+      return [];
+    }
+  }
+  return [];
 }
 
-// ====== Functions ======
+async function savePending(data: PendingLevel[]) {
+  if (drive) {
+    try {
+      await ensureDriveFile();
+      await drive.files.update({
+        fileId: driveFileId!,
+        media: {
+          mimeType: 'application/json',
+          body: JSON.stringify(data, null, 2)
+        }
+      });
+      return;
+    } catch (e) {
+      console.error('Failed to save pending to Drive, fallback to local:', e);
+    }
+  }
+
+  // local fallback
+  try {
+    fs.writeFileSync(LOCAL_PENDING_PATH, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Failed to write local pending.json:', e);
+  }
+}
+
+// ---------------- arg parser for !say ----------------
 function parseArgs(content: string): string[] {
   const regex = /"([^"]+)"|(\S+)/g;
   const args: string[] = [];
   let match;
   while ((match = regex.exec(content)) !== null) {
-    if (match[1]) {
-      args.push(match[1]); // 큰따옴표 안 문자열
-    } else if (match[2]) {
-      args.push(match[2]); // 공백 없는 단어
-    }
+    if (match[1]) args.push(match[1]);
+    else if (match[2]) args.push(match[2]);
   }
   return args;
 }
 
-// ====== Global Command Deletion ======
-(async () => {
-  try {
-    console.log('Fetching commands...');
-    const commands = await rest.get(
-      Routes.applicationCommands(process.env.CLIENT_ID!)
-    ) as any[];
-
-    console.log(`Found ${commands.length} commands:`);
-    for (const cmd of commands) {
-      console.log(`Deleting: ${cmd.name}`);
-      await rest.delete(
-        Routes.applicationCommand(process.env.CLIENT_ID!, cmd.id)
-      );
-    }
-
-    console.log('✅ All global commands deleted.');
-  } catch (error) {
-    console.error(error);
-  }
-})();
-
-// ====== Simple HTTP server for uptime checks ======
-const port = process.env.PORT || 3000;
-http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end('Bot is running');
-}).listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
-
-// ====== Discord Client ======
+// ---------------- discord client ----------------
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -102,264 +187,311 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel]
 });
 
-// Verification stages for /verifyme
-const VERIFY_STAGES = [
-  'verified',
-  'double verified',
-  'triple verified',
-  'ultimately verified'
-];
+// Register slash commands (guild-scoped)
+const verifyCmd = new SlashCommandBuilder()
+  .setName('verifyme')
+  .setDescription('Get verified (fun tiered roles)')
+  .toJSON();
 
-// ====== Accept Command ======
-const acceptCommand = new SlashCommandBuilder()
+const acceptCmd = new SlashCommandBuilder()
   .setName('accept')
-  .setDescription('Accept a level by Thread ID')
-  .addStringOption(option => 
-    option.setName('postid')
-      .setDescription('Thread ID of the level submission to accept')
-      .setRequired(true)
-  )
-  .toJSON();
-// ====== List Command ======
-const listCommand = new SlashCommandBuilder()
-  .setName('list')
-  .setDescription('Show list of levels with votes sorted by average score')
+  .setDescription('Accept a forum post by Thread ID')
+  .addStringOption(opt => opt.setName('postid').setDescription('Thread ID').setRequired(true))
   .toJSON();
 
-// ======  vote command ======
-const voteCommand = new SlashCommandBuilder()
+const voteCmd = new SlashCommandBuilder()
   .setName('vote')
-  .setDescription('Vote for a pending level')
+  .setDescription('Start voting (pick a pending level)')
   .toJSON();
 
-// ====== Bot Ready ======
-client.once('ready', async () => {
-  console.log(`✅ Logged in as ${client.user?.tag}`);
+const listCmd = new SlashCommandBuilder()
+  .setName('list')
+  .setDescription('Show list of voted levels (by avg)')
+  .toJSON();
 
-  // Guild-specific command registration
+// verification stages
+const VERIFY_STAGES = ['verified', 'double verified', 'triple verified', 'ultimately verified'];
+
+// once ready: register commands
+client.once('ready', async () => {
+  console.log('Logged in as', client.user?.tag);
   const guildId = process.env.GUILD_ID!;
   const guild = await client.guilds.fetch(guildId);
 
-
-  const data = [
-    new SlashCommandBuilder()
-      .setName('verifyme')
-      .setDescription('Get verified (...What if you sennd this multiple times...?)')
-      .toJSON()
-  ];
-
-  const commands = [
-  new SlashCommandBuilder()
-    .setName('verifyme')
-    .setDescription('Get verified (...What if you sennd this multiple times...?)')
-    .toJSON(),
-  voteCommand,
-  listCommand,
-  acceptCommand
-];
-
-  await guild.commands.set(commands);
-console.log(`✅ All slash commands registered in guild: ${guild.name}`);
+  const cmds = [verifyCmd, acceptCmd, voteCmd, listCmd];
+  await guild.commands.set(cmds);
+  console.log('Registered commands in guild', guild.name);
 });
 
-// ====== Handle Slash Commands ======
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-  if (interaction.guildId !== process.env.GUILD_ID) {
-    await interaction.reply({ content: '❌ This command can only be used in the allowed server.', ephemeral: true });
-    return;
-  }
-
-  if (interaction.commandName === 'verifyme') {
-    if (!interaction.guild) {
-      await interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+// single interaction handler for commands / select / modal
+client.on('interactionCreate', async (interaction: Interaction) => {
+  // Slash commands
+  if (interaction.isChatInputCommand()) {
+    const ctx = interaction as ChatInputCommandInteraction;
+    // restrict to guild
+    if (ctx.guildId !== process.env.GUILD_ID) {
+      await ctx.reply({ content: 'This command only works in the allowed server.', ephemeral: true });
       return;
     }
 
-    // Wait for the interaction to be deferred
-    await interaction.deferReply({ ephemeral: true });
-
-    const member = interaction.member as GuildMember;
-
-    // find the current verification stage based on roles
-    let currentStage = -1;
-    for (let i = VERIFY_STAGES.length - 1; i >= 0; i--) {
-      if (member.roles.cache.some(r => r.name.toLowerCase() === VERIFY_STAGES[i].toLowerCase())) {
-        currentStage = i;
-        break;
+    // ---------- verifyme ----------
+    if (ctx.commandName === 'verifyme') {
+      await ctx.deferReply({ ephemeral: true });
+      const member = ctx.member as GuildMember;
+      let currentStage = -1;
+      for (let i = VERIFY_STAGES.length - 1; i >= 0; i--) {
+        if (member.roles.cache.some(r => r.name.toLowerCase() === VERIFY_STAGES[i].toLowerCase())) {
+          currentStage = i;
+          break;
+        }
       }
+      const nextStage = Math.min(currentStage + 1, VERIFY_STAGES.length - 1);
+      const roleName = VERIFY_STAGES[nextStage];
+
+      let role = ctx.guild!.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
+      if (!role) {
+        role = await ctx.guild!.roles.create({ name: roleName, reason: 'Verification role' });
+      }
+      if (!member.roles.cache.has(role.id)) await member.roles.add(role);
+
+      if (roleName === 'verified') {
+        await ctx.editReply({ content: '✅ You are now verified!' });
+      } else if (roleName === 'double verified' || roleName === 'triple verified') {
+        await ctx.editReply({ content: 'You are now verified!...... more?' });
+      } else {
+        await ctx.editReply({ content: 'YOU GOT ULTIMATELY VERIFIED!' });
+      }
+      return;
     }
 
-    const nextStage = Math.min(currentStage + 1, VERIFY_STAGES.length - 1);
-    const roleName = VERIFY_STAGES[nextStage];
+    // ---------- accept ----------
+    if (ctx.commandName === 'accept') {
+      // permission: MANAGER role
+      const managerRoleName = process.env.MANAGER || '';
+      const member = ctx.member as GuildMember;
+      if (!member.roles.cache.some(r => r.name === managerRoleName)) {
+        await ctx.reply({ content: 'You do not have permission to use /accept', ephemeral: true });
+        return;
+      }
+      await ctx.deferReply({ ephemeral: true });
 
-    // find or create the role
-    let role = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
-    if (!role) {
-      role = await interaction.guild.roles.create({
-        name: roleName,
-        reason: 'Verification stage role'
+      const postId = ctx.options.getString('postid', true).trim();
+      // load pending
+      const pendings = await loadPending();
+      if (pendings.find(p => p.postIdOrTag === postId)) {
+        await ctx.editReply('This thread is already accepted.');
+        return;
+      }
+
+      // attempt to fetch thread and get thumbnail & thread info
+      let thumbnailUrl = 'https://via.placeholder.com/150';
+      let levelName = postId;
+      try {
+        const fetched = await client.channels.fetch(postId);
+        if (fetched && fetched.isThread()) {
+          const thread = fetched;
+          // threadName
+          levelName = thread.name ?? postId;
+          // starter message
+          const starter = await (thread as any).fetchStarterMessage().catch(() => null);
+          if (starter) {
+            // attachments
+            const img = starter.attachments.find((a: any) => a.contentType?.startsWith('image/'));
+            if (img) thumbnailUrl = img.url;
+            // embeds
+            else if (starter.embeds.length > 0) {
+              const e = starter.embeds[0];
+              thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
+            }
+          }
+        }
+      } catch (e) {
+        console.log('fetch thread failed or not thread:', e);
+      }
+
+      // save pending
+      pendings.push({
+        postIdOrTag: postId,
+        levelName,
+        authorId: ctx.user.id,
+        thumbnailUrl,
+        ranks: [],
+        votes: { song: [], design: [], vibe: [] }
       });
-    }
+      await savePending(pendings);
 
-    if (!member.roles.cache.has(role.id)) {
-      await member.roles.add(role);
-    }
+      // build thread URL using FORUM_CHANNEL_ID env (recommended)
+      const forumChannelId = process.env.FORUM_CHANNEL_ID || '';
+      const threadUrl = `https://discord.com/channels/${ctx.guildId}/${forumChannelId || (ctx.guildId ?? '')}/${postId}`;
 
-    // send a confirmation message
-    if (roleName == "verified") {
-      await interaction.editReply({ content: `✅ You are now verified!`});
-    }else if (roleName == "double verified" || roleName == "triple verified") {
-      await interaction.editReply({ content: `You are now verified!...... more?`});
-    }else {
-      await interaction.editReply({ content: `YOU GOT ULTIMATELY VERIFIED!`});
-    }
-  }
-});
+      const embed = new EmbedBuilder()
+        .setTitle(`${levelName} has been accepted!`)
+        .setURL(threadUrl)
+        .setDescription(`by <@${ctx.user.id}>`)
+        .setThumbnail(thumbnailUrl)
+        .setFooter({ text: 'Use /vote for This COOL Level!' })
+        .setColor('#00FF00')
+        .setTimestamp();
 
-// ====== Accept Command ======
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== 'accept') return;
-
-  // 서버 제한
-  if (interaction.guildId !== process.env.GUILD_ID) {
-    await interaction.reply({ content: '❌ This command can only be used in the allowed server.', ephemeral: true });
-    return;
-  }
-
-  const member = interaction.member as GuildMember;
-  const managerRoleName = process.env.MANAGER || '';
-  if (!member.roles.cache.some(r => r.name === managerRoleName)) {
-    await interaction.reply({ content: '❌ You do not have permission to use this command.', ephemeral: true });
-    return;
-  }
-
-  await interaction.deferReply({ ephemeral: true });
-
-  const postIdOrTag = interaction.options.getString('postid', true);
-
-  const pendings = loadPending();
-  if (pendings.find(p => p.postIdOrTag === postIdOrTag)) {
-    await interaction.editReply('This post/tag is already accepted.');
-    return;
-  }
-
-  // 기본 썸네일
-  let thumbnailUrl = 'https://via.placeholder.com/150';
-
-  // 썸네일 자동 추출 시도
-  try {
-    const channel = await client.channels.fetch(postIdOrTag);
-    if (channel?.isThread()) {
-      const starterMessage = await channel.fetchStarterMessage();
-      if (starterMessage) {
-        if (starterMessage.attachments.size > 0) {
-          const imgAttachment = starterMessage.attachments.find(att => att.contentType?.startsWith('image/'));
-          if (imgAttachment) thumbnailUrl = imgAttachment.url;
-        }
-        if ((!thumbnailUrl || thumbnailUrl === 'https://via.placeholder.com/150') && starterMessage.embeds.length > 0) {
-          const embed = starterMessage.embeds[0];
-          thumbnailUrl = embed.thumbnail?.url ?? embed.image?.url ?? thumbnailUrl;
-        }
+      // send to the channel where command was used (if supports send)
+      const ch = ctx.channel as TextChannel | null;
+      if (ch?.isTextBased && ch.isTextBased()) {
+        await ch.send({ embeds: [embed] });
+      } else {
+        await ctx.followUp({ content: 'Cannot send announcement in this channel.', ephemeral: true });
       }
+
+      await ctx.editReply('Accepted and announced.');
+      return;
     }
-  } catch {
-    // 무시하고 기본 썸네일 유지
+
+    // ---------- vote ----------
+    if (ctx.commandName === 'vote') {
+      // permission: role + channel restriction
+      const roleName = process.env.VOTE_PERM_ROLE || 'vote perm';
+      const voteRole = ctx.guild!.roles.cache.find(r => r.name === roleName);
+      const member = ctx.member as GuildMember;
+      if (!voteRole || !member.roles.cache.has(voteRole.id)) {
+        await ctx.reply({ content: 'You do not have permission to vote.', ephemeral: true });
+        return;
+      }
+      const votingChannelId = process.env.VOTING_CHANNEL_ID;
+      if (votingChannelId && ctx.channelId !== votingChannelId) {
+        await ctx.reply({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
+        return;
+      }
+
+      const pendings = await loadPending();
+      if (pendings.length === 0) {
+        await ctx.reply({ content: 'No pending levels to vote.', ephemeral: true });
+        return;
+      }
+
+      // build select menu
+      const options = pendings.slice(0, 25).map(p => ({
+        label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
+        description: p.postIdOrTag,
+        value: p.postIdOrTag
+      }));
+
+      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('vote_select_level')
+          .setPlaceholder('Choose a level to vote')
+          .addOptions(options)
+      );
+
+      await ctx.reply({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
+      return;
+    }
+
+    // ---------- list ----------
+    if (ctx.commandName === 'list') {
+      await ctx.deferReply({ ephemeral: true });
+      const pendings = await loadPending();
+      const scored = pendings
+        .filter(p => p.votes && p.votes.song.length > 0)
+        .map(p => {
+          const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+          const s = avg(p.votes.song);
+          const d = avg(p.votes.design);
+          const v = avg(p.votes.vibe);
+          const overall = (s + d + v) / 3;
+          return { ...p, overall, s, d, v };
+        })
+        .sort((a, b) => b.overall - a.overall);
+
+      if (scored.length === 0) {
+        await ctx.editReply('No levels have votes yet.');
+        return;
+      }
+
+      const lines = scored.map((p, i) =>
+        `${i + 1}. ${p.levelName} (${p.postIdOrTag}) — Avg: ${p.overall.toFixed(2)} (Song:${p.s.toFixed(2)}, Design:${p.d.toFixed(2)}, Vibe:${p.v.toFixed(2)})`
+      );
+      await ctx.editReply({ content: `**Voted levels:**\n${lines.join('\n')}` });
+      return;
+    }
   }
 
-  // 저장
-  pendings.push({
-    postIdOrTag,
-    levelName: postIdOrTag,
-    authorId: interaction.user.id,
-    ranks: [],
-    votes: { song: [], design: [], vibe: [] },
-    thumbnailUrl
-  });
-  savePending(pendings);
+  // --------------- component interactions: select menu ---------------
+  if (interaction.isStringSelectMenu()) {
+    const sel = interaction as StringSelectMenuInteraction;
+    if (sel.customId === 'vote_select_level') {
+      await sel.deferReply({ ephemeral: true });
+      const selectedId = sel.values[0];
+      // show modal to collect 3 scores
+      const modal = new ModalBuilder()
+        .setCustomId(`vote_modal_${selectedId}`)
+        .setTitle('Vote (1-10)');
 
-  const channel = interaction.channel as TextChannel | null;
-  const forumChannelId = process.env.FORUM_CHANNEL_ID || '';
+      const songInput = new TextInputBuilder()
+        .setCustomId('songScore')
+        .setLabel('Song (1-10)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. 7')
+        .setRequired(true);
 
-  // 가상 포스트 링크 생성
-  const threadUrl = `https://discord.com/channels/${interaction.guildId}/${forumChannelId}/${postIdOrTag}`;
+      const designInput = new TextInputBuilder()
+        .setCustomId('designScore')
+        .setLabel('Level Design (1-10)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. 8')
+        .setRequired(true);
 
-  // 알림 메시지 (명령어 사용 채널)
-  const embed = new EmbedBuilder()
-  .setTitle(`${threadUrl} has been accepted!`)
-  .setDescription(`by <@${interaction.user.id}>`)
-  .setThumbnail(thumbnailUrl)
-  .setFooter({ text: 'Use /vote for This COOL Level!' })
-  .setColor('#00FF00')
-  .setTimestamp();
+      const vibeInput = new TextInputBuilder()
+        .setCustomId('vibeScore')
+        .setLabel("Level's Vibe (1-10)")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. 6')
+        .setRequired(true);
 
-  
-if (channel) {
-  await channel.send({ embeds: [embed] });
-} else {
-  await interaction.followUp({ content: 'Cannot send message in this channel.', ephemeral: true });
-}
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(songInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(designInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(vibeInput)
+      );
 
-  await interaction.editReply('Accepted and announced.');
-});
+      await sel.showModal(modal);
+      return;
+    }
+  }
 
-// ====== Vote Command Handler ======
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
+  // --------------- modal submit ---------------
+  if (interaction.isModalSubmit()) {
+    const modal = interaction as ModalSubmitInteraction;
+    if (!modal.customId.startsWith('vote_modal_')) return;
+    await modal.deferReply({ ephemeral: true });
 
-  if (interaction.commandName === 'vote') {
-    // Check if the interaction is in the correct guild
-    if (interaction.guildId !== process.env.GUILD_ID) {
-      await interaction.reply({ content: '❌ This command can only be used in the allowed server.', ephemeral: true });
+    const postId = modal.customId.replace('vote_modal_', '');
+    const song = parseInt(modal.fields.getTextInputValue('songScore'), 10);
+    const design = parseInt(modal.fields.getTextInputValue('designScore'), 10);
+    const vibe = parseInt(modal.fields.getTextInputValue('vibeScore'), 10);
+
+    if ([song, design, vibe].some(n => isNaN(n) || n < 1 || n > 10)) {
+      await modal.editReply({ content: 'Scores must be numbers between 1 and 10.' });
       return;
     }
 
-    const member = interaction.member as GuildMember;
-    if (!member.roles.cache.some(r => r.name === process.env.VOTE_PERM_ROLE)) {
-      await interaction.reply({ content: '❌ You do not have permission to vote.', ephemeral: true });
+    const pendings = await loadPending();
+    const lvl = pendings.find(p => p.postIdOrTag === postId);
+    if (!lvl) {
+      await modal.editReply({ content: 'Selected level not found.' });
       return;
     }
 
-    if (interaction.channelId !== process.env.VOTING_CHANNEL_ID) {
-      await interaction.reply({ content: `❌ You can only vote in <#${process.env.VOTING_CHANNEL_ID}>.`, ephemeral: true });
-      return;
-    }
+    lvl.votes.song.push(song);
+    lvl.votes.design.push(design);
+    lvl.votes.vibe.push(vibe);
+    await savePending(pendings);
 
-    // Pending list load
-    const pendings = loadPending();
-    if (pendings.length === 0) {
-      await interaction.reply({ content: 'No pending levels available for voting.', ephemeral: true });
-      return;
-    }
-
-    // 레벨 선택용 select 메뉴 생성
-    const selectOptions = pendings.map(p => ({
-      label: p.levelName,
-      description: p.postIdOrTag,
-      value: p.postIdOrTag
-    }));
-
-    // 최대 25개 제한에 유의
-    await interaction.reply({
-      content: 'Select a level to vote for:',
-      components: [{
-        type: 1, // ActionRow
-        components: [{
-          type: 3, // StringSelectMenu
-          custom_id: 'vote_select_level',
-          placeholder: 'Choose a level',
-          options: selectOptions.slice(0, 25)
-        }]
-      }],
-      ephemeral: true
-    });
+    await modal.editReply({ content: `Thanks — your vote for **${lvl.levelName}** has been recorded.` });
+    return;
   }
 });
 
-
-// ====== !say Command ======
-client.on('messageCreate', async (message) => {
+// ---------------- message-based !say command ----------------
+client.on('messageCreate', async (message: Message) => {
   if (message.author.bot) return;
   if (!message.guild) return;
   if (message.guild.id !== process.env.GUILD_ID) return;
@@ -373,37 +505,30 @@ client.on('messageCreate', async (message) => {
   const baseRoleName = process.env.MANAGER || '';
   const baseRole = message.guild.roles.cache.find(r => r.name === baseRoleName);
   if (!baseRole) {
-    message.reply(`Base role "${baseRoleName}" not found.`);
+    await message.reply(`Base role "${baseRoleName}" not found.`);
     return;
   }
   if (member.roles.highest.position < baseRole.position) {
-    message.reply('❌ You do not have permission to use this command.');
+    await message.reply('❌ You do not have permission to use this command.');
     return;
   }
 
-  // remove the prefix from the message content
-  const rawArgs = message.content.slice(PREFIX.length).trim();
-  const args = parseArgs(rawArgs);
-
+  const raw = message.content.slice(PREFIX.length).trim();
+  const args = parseArgs(raw);
   if (args.length < 2) {
-    message.reply('❌ Usage: !say [channelMention/channelID] [content] [title(optional)] [description(optional)]');
+    await message.reply('❌ Usage: !say [#channel or channelID] "content" "title(optional)" "description(optional)"');
     return;
   }
 
   const channelArg = args[0];
-  let targetChannel: TextChannel | null = null;
-
-  const mentionMatch = channelArg.match(/^<#(\d+)>$/);
-  const channelId = mentionMatch ? mentionMatch[1] : channelArg;
+  const mention = channelArg.match(/^<#(\d+)>$/);
+  const channelId = mention ? mention[1] : channelArg;
   const ch = message.guild.channels.cache.get(channelId);
-  if (ch && ch.isTextBased()) {
-    targetChannel = ch as TextChannel;
-  }
-
-  if (!targetChannel) {
-    message.reply('❌ Please provide a valid text channel mention or ID.');
+  if (!ch || !ch.isTextBased()) {
+    await message.reply('❌ Provide a valid text channel mention or ID.');
     return;
   }
+  const target = ch as TextChannel;
 
   const content = args[1];
   const title = args[2] || '';
@@ -411,73 +536,32 @@ client.on('messageCreate', async (message) => {
 
   const embed = new EmbedBuilder()
     .setColor('#5865F2')
-    .setDescription(`**${content}**`);
+    .setDescription(`**${content}**`)
+    .setTimestamp();
 
-  if (title) {
-    embed.setTitle(`📢 ${title}`);
-  }
-  if (description) {
-    embed.setFooter({
-      text: description,
-      iconURL: message.client.user?.displayAvatarURL() || undefined
-    });
-  }
-  embed.setTimestamp();
+  if (title) embed.setTitle(`📢 ${title}`);
+  if (description) embed.setFooter({ text: description, iconURL: client.user?.displayAvatarURL() ?? undefined });
 
   try {
-    await targetChannel.send({ embeds: [embed] });
-    await message.react('1404415892120539216');
-  } catch (err) {
-    console.error(err);
-    message.reply('❌ Failed to send the message.');
-  }
-});
-
-// ====== LIST Command Handler ======
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-
-  if (interaction.guildId !== process.env.GUILD_ID) {
-    await interaction.reply({ content: '❌ This command can only be used in the allowed server.', ephemeral: true });
-    return;
-  }
-
-  const member = interaction.member as GuildMember;
-
-  if (interaction.commandName === 'list') {
-    // 모든 점수가 없는 레벨 필터링
-    const pendings = loadPending().filter(p =>
-      p.votes && p.votes.song.length > 0 && p.votes.design.length > 0 && p.votes.vibe.length > 0
-    );
-
-    if (pendings.length === 0) {
-      await interaction.reply({ content: 'No levels have votes yet.', ephemeral: true });
-      return;
+    await target.send({ embeds: [embed] });
+    const emojiId = process.env.REACTION_EMOJI_ID;
+    if (emojiId) {
+      await message.react(emojiId).catch(() => { /* ignore */ });
+    } else {
+      await message.react('✅').catch(() => { /* ignore non-custom */ });
     }
-
-    // 평균 점수 계산 헬퍼 함수
-    const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
-
-    // 평균 점수 내림차순 정렬 (song, design, vibe 평균의 평균)
-    pendings.sort((a, b) => {
-      const aAvg = (avg(a.votes!.song) + avg(a.votes!.design) + avg(a.votes!.vibe)) / 3;
-      const bAvg = (avg(b.votes!.song) + avg(b.votes!.design) + avg(b.votes!.vibe)) / 3;
-      return bAvg - aAvg;
-    });
-
-    // 메시지 생성
-    const listString = pendings.map(p => {
-      const songAvg = avg(p.votes!.song).toFixed(2);
-      const designAvg = avg(p.votes!.design).toFixed(2);
-      const vibeAvg = avg(p.votes!.vibe).toFixed(2);
-      const overallAvg = ((parseFloat(songAvg) + parseFloat(designAvg) + parseFloat(vibeAvg)) / 3).toFixed(2);
-      return `**${p.levelName}** (Tag: ${p.postIdOrTag}) - Avg Score: ${overallAvg} (Song: ${songAvg}, Design: ${designAvg}, Vibe: ${vibeAvg})`;
-    }).join('\n');
-
-    await interaction.reply({ content: `**Levels with votes:**\n${listString}`, ephemeral: true });
+  } catch (e) {
+    console.error('!say send failed', e);
+    await message.reply('❌ Failed to send message.');
   }
-
-  // vote 명령어 기존 처리 ...
 });
 
+// ---------------- start HTTP server for uptime ping ----------------
+const port = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Bot running');
+}).listen(port, () => console.log('Server running on port', port));
+
+// ---------------- login ----------------
 client.login(process.env.TOKEN);
