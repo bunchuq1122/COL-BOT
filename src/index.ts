@@ -59,10 +59,13 @@ if (GOOGLE_SERVICE_ACCOUNT) {
   try {
     const creds = JSON.parse(GOOGLE_SERVICE_ACCOUNT);
     authClient = new google.auth.JWT({
-      email: creds.client_email,
-      key: creds.private_key,
-      scopes: ['https://www.googleapis.com/auth/drive.file'],
-    } as any);
+    email: creds.client_email,
+    key: creds.private_key,
+    scopes: [
+      'https://www.googleapis.com/auth/documents',
+      'https://www.googleapis.com/auth/drive.file',
+    ],
+  } as any);
     drive = google.drive({ version: 'v3', auth: authClient });
   } catch (e) {
     console.error('Failed to init Google service account:', e);
