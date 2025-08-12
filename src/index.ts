@@ -669,7 +669,7 @@ client.on('messageCreate', async (message: Message) => {
     return;
   }
   if (message.channel.isTextBased()) {
-    await (message.channel as TextChannel).send(roleMention(process.env.RROZY || 'rrozy')+ ' ' + 'got fucked by' + ' '+ member);
+    await (message.channel as TextChannel).send(roleMention(process.env.RROZY || 'rrozy')+ ' ' + 'got fucked by' + ' '+ member.toString());
   }
 });
 
