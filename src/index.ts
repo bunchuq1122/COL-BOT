@@ -507,7 +507,12 @@ client.on('messageCreate', async (message: Message) => {
       await (message.channel as TextChannel).send({ embeds: [embed] });
     }
 
-    await message.reply('Accepted and announced.');
+    const emojiId = process.env.REACTION_EMOJI_ID;
+    if (emojiId) {
+      await message.react(emojiId).catch(() => {});
+    } else {
+      await message.react('1404415892120539216').catch(() => {});
+    }
     return;
   }
 
@@ -558,10 +563,87 @@ client.on('messageCreate', async (message: Message) => {
 
 // ---------------- message-based !say command ----------------
 client.on('messageCreate', async (message: Message) => {
-  // !say 처리 - 이미 이전에 구현되어 있었다면 중복으로 두지 마세요.
-  // 이 블록은 이미 messageCreate 이벤트에서 처리되므로, 필요하면 기존 !say 핸들러와 합치세요.
-  // (여기선 이미 위에서 messageCreate 핸들러가 등록되어 있으니 중복 주의)
+  if (message.author.bot) return;
+  if (!message.guild) return;
+  if (message.guild.id !== process.env.GUILD_ID) return;
+
+  const PREFIX = '!say';
+  if (!message.content.startsWith(PREFIX)) return;
+
+  const member = message.member;
+  if (!member) return;
+
+  const baseRoleName = process.env.MANAGER || '';
+  const baseRole = message.guild.roles.cache.find(r => r.name === baseRoleName);
+  if (!baseRole) {
+    await message.reply(`Base role "${baseRoleName}" not found.`);
+    return;
+  }
+
+  if (member.roles.highest.position < baseRole.position) {
+    await message.reply('❌ You do not have permission to use this command.');
+    return;
+  }
+
+  const raw = message.content.slice(PREFIX.length).trim();
+  const args = parseArgs(raw);
+  if (args.length < 2) {
+    await message.reply(
+      '❌ Usage: !say [#channel or channelID] "content" "title(optional)" "description(optional)" "imageURL(optional)" "color(optional)"'
+    );
+    return;
+  }
+
+  const channelArg = args[0];
+  const mention = channelArg.match(/^<#(\d+)>$/);
+  const channelId = mention ? mention[1] : channelArg;
+  const ch = message.guild.channels.cache.get(channelId);
+
+  if (!ch || !ch.isTextBased()) {
+    await message.reply('❌ Provide a valid text channel mention or ID.');
+    return;
+  }
+  const target = ch as TextChannel;
+
+  const content = args[1];
+  const title = args[2] || '';
+  const description = args[3] || '';
+  const imageUrl = args[4] || '';
+  const colorInput = args[5] || '#5865F2'; // 기본 색상
+
+  // 색상 유효성 검사
+  const isValidHexColor = /^#([0-9A-F]{6}|[0-9A-F]{3})$/i.test(colorInput);
+  const embedColor = isValidHexColor
+    ? parseInt(colorInput.replace('#', ''), 16)
+    : 0x5865F2;
+
+  const embed = new EmbedBuilder()
+    .setColor(embedColor)
+    .setDescription(`**${content}**`)
+    .setTimestamp();
+
+  if (title) embed.setTitle(`📢 ${title}`);
+  if (description)
+    embed.setFooter({
+      text: description,
+      iconURL: client.user?.displayAvatarURL() ?? undefined
+    });
+  if (imageUrl) embed.setImage(imageUrl);
+
+  try {
+    await target.send({ embeds: [embed] });
+    const emojiId = process.env.REACTION_EMOJI_ID;
+    if (emojiId) {
+      await message.react(emojiId).catch(() => {});
+    } else {
+      await message.react('1404415892120539216').catch(() => {});
+    }
+  } catch (e) {
+    console.error('!say send failed', e);
+    await message.reply('❌ Failed to send message.');
+  }
 });
+
 
 // ---------------- start HTTP server for uptime ping ----------------
 const port = process.env.PORT || 3000;
