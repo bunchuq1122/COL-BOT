@@ -46,7 +46,8 @@ if (GOOGLE_SERVICE_ACCOUNT) {
     const creds = JSON.parse(GOOGLE_SERVICE_ACCOUNT);
     authClient = new google.auth.JWT({
       email: creds.client_email,
-      key: creds.private_key.replace(/\\n/g, '\n'), // 줄바꿈 변환 꼭 해주기
+      // Render 등에 넣을 때 private_key에 "\\n"으로 들어오는 경우를 위해 변환
+      key: (creds.private_key as string).replace(/\\n/g, '\n'),
       scopes: [
         'https://www.googleapis.com/auth/documents',
         'https://www.googleapis.com/auth/drive.file',
@@ -59,7 +60,6 @@ if (GOOGLE_SERVICE_ACCOUNT) {
     console.error('Failed to init Google service account:', e);
   }
 }
-
 
 // local fallback path (if Google Docs not available)
 const LOCAL_PENDING_PATH = path.resolve('./pending.json');
@@ -76,6 +76,8 @@ type PendingLevel = {
     design: number[];
     vibe: number[];
   };
+  // 새로운 필드: 이미 투표한 사용자 아이디 목록 (한 사람 한 레벨 1회 제한)
+  voters: string[];
 };
 
 // ---------------- helper: load/save pending ----------------
@@ -184,12 +186,6 @@ const verifyCmd = new SlashCommandBuilder()
   .setDescription('Get verified (fun tiered roles)')
   .toJSON();
 
-const acceptCmd = new SlashCommandBuilder()
-  .setName('accept')
-  .setDescription('Accept a forum post by Thread ID')
-  .addStringOption(opt => opt.setName('postid').setDescription('Thread ID').setRequired(true))
-  .toJSON();
-
 const voteCmd = new SlashCommandBuilder()
   .setName('vote')
   .setDescription('Start voting (pick a pending level)')
@@ -209,7 +205,7 @@ client.once('ready', async () => {
   const guildId = process.env.GUILD_ID!;
   const guild = await client.guilds.fetch(guildId);
 
-  const cmds = [verifyCmd, acceptCmd, voteCmd, listCmd];
+  const cmds = [verifyCmd, voteCmd, listCmd];
   await guild.commands.set(cmds);
   console.log('✅ Registered commands in guild', guild.name);
 });
@@ -254,136 +250,61 @@ client.on('interactionCreate', async (interaction: Interaction) => {
       return;
     }
 
-    // --- accept ---
-    if (ctx.commandName === 'accept') {
-      const managerRoleName = process.env.MANAGER || '';
-      const member = ctx.member as GuildMember;
-      if (!member.roles.cache.some(r => r.name === managerRoleName)) {
-        await ctx.reply({ content: 'You do not have permission to use /accept', ephemeral: true });
-        return;
-      }
-      await ctx.deferReply({ ephemeral: true });
-
-      const postId = ctx.options.getString('postid', true).trim();
-      const pendings = await loadPending();
-      if (pendings.find(p => p.postIdOrTag === postId)) {
-        await ctx.editReply('This thread is already accepted.');
-        return;
-      }
-
-      let thumbnailUrl = 'https://via.placeholder.com/150';
-      let levelName = postId;
-      try {
-        const fetched = await client.channels.fetch(postId);
-        if (fetched && fetched.isThread()) {
-          const thread = fetched;
-          levelName = thread.name ?? postId;
-          const starter = await (thread as any).fetchStarterMessage().catch(() => null);
-          if (starter) {
-            const img = starter.attachments.find((a: any) => a.contentType?.startsWith('image/'));
-            if (img) thumbnailUrl = img.url;
-            else if (starter.embeds.length > 0) {
-              const e = starter.embeds[0];
-              thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
-            }
-          }
-        }
-      } catch (e) {
-        console.log('fetch thread failed or not thread:', e);
-      }
-
-      pendings.push({
-        postIdOrTag: postId,
-        levelName,
-        authorId: ctx.user.id,
-        thumbnailUrl,
-        ranks: [],
-        votes: { song: [], design: [], vibe: [] }
-      });
-
-      await savePending(pendings);
-      console.log('Pending levels saved:', pendings.length);
-
-      const forumChannelId = process.env.FORUM_CHANNEL_ID || '';
-      const threadUrl = `https://discord.com/channels/${ctx.guildId}/${forumChannelId || (ctx.guildId ?? '')}/${postId}`;
-
-      const embed = new EmbedBuilder()
-        .setTitle(`${levelName} has been accepted!`)
-        .setURL(threadUrl)
-        .setDescription(`by <@${ctx.user.id}>`)
-        .setThumbnail(thumbnailUrl)
-        .setFooter({ text: 'Use /vote for This COOL Level!' })
-        .setColor('#00FF00')
-        .setTimestamp();
-
-      const ch = ctx.channel as TextChannel | null;
-      if (ch?.isTextBased && ch.isTextBased()) {
-        await ch.send({ embeds: [embed] });
-      } else {
-        await ctx.followUp({ content: 'Cannot send announcement in this channel.', ephemeral: true });
-      }
-
-      await ctx.editReply('Accepted and announced.');
-      return;
-    }
-
     // --- vote ---
     if (ctx.commandName === 'vote') {
-    const roleName = process.env.VOTE_PERM_ROLE || 'vote perm';
-    const voteRole = ctx.guild!.roles.cache.find(r => r.name === roleName);
-    const member = ctx.member as GuildMember;
+      const roleName = process.env.VOTE_PERM_ROLE || 'vote perm';
+      const voteRole = ctx.guild!.roles.cache.find(r => r.name === roleName);
+      const member = ctx.member as GuildMember;
 
-    if (!voteRole || !member.roles.cache.has(voteRole.id)) {
-      // 아직 응답 안 했으면 reply, 이미 했다면 followUp 하는 안전처리도 가능
+      if (!voteRole || !member.roles.cache.has(voteRole.id)) {
+        if (ctx.replied || ctx.deferred) {
+          await ctx.followUp({ content: 'You do not have permission to vote.', ephemeral: true });
+        } else {
+          await ctx.reply({ content: 'You do not have permission to vote.', ephemeral: true });
+        }
+        return;
+      }
+
+      const votingChannelId = process.env.VOTING_CHANNEL_ID;
+      if (votingChannelId && ctx.channelId !== votingChannelId) {
+        if (ctx.replied || ctx.deferred) {
+          await ctx.followUp({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
+        } else {
+          await ctx.reply({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
+        }
+        return;
+      }
+
+      const pendings = await loadPending();
+      if (pendings.length === 0) {
+        if (ctx.replied || ctx.deferred) {
+          await ctx.followUp({ content: 'No pending levels to vote.', ephemeral: true });
+        } else {
+          await ctx.reply({ content: 'No pending levels to vote.', ephemeral: true });
+        }
+        return;
+      }
+
+      const options = pendings.slice(0, 25).map(p => ({
+        label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
+        description: p.postIdOrTag,
+        value: p.postIdOrTag
+      }));
+
+      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('vote_select_level')
+          .setPlaceholder('Choose a level to vote')
+          .addOptions(options)
+      );
+
       if (ctx.replied || ctx.deferred) {
-        await ctx.followUp({ content: 'You do not have permission to vote.', ephemeral: true });
+        await ctx.followUp({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
       } else {
-        await ctx.reply({ content: 'You do not have permission to vote.', ephemeral: true });
+        await ctx.reply({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
       }
       return;
     }
-
-    const votingChannelId = process.env.VOTING_CHANNEL_ID;
-    if (votingChannelId && ctx.channelId !== votingChannelId) {
-      if (ctx.replied || ctx.deferred) {
-        await ctx.followUp({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
-      } else {
-        await ctx.reply({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
-      }
-      return;
-    }
-
-    const pendings = await loadPending();
-    if (pendings.length === 0) {
-      if (ctx.replied || ctx.deferred) {
-        await ctx.followUp({ content: 'No pending levels to vote.', ephemeral: true });
-      } else {
-        await ctx.reply({ content: 'No pending levels to vote.', ephemeral: true });
-      }
-      return;
-    }
-
-    const options = pendings.slice(0, 25).map(p => ({
-      label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
-      description: p.postIdOrTag,
-      value: p.postIdOrTag
-    }));
-
-    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('vote_select_level')
-        .setPlaceholder('Choose a level to vote')
-        .addOptions(options)
-    );
-
-    if (ctx.replied || ctx.deferred) {
-      await ctx.followUp({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
-    } else {
-      await ctx.reply({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
-    }
-    return;
-    }
-
 
     // --- list ---
     if (ctx.commandName === 'list') {
@@ -450,6 +371,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         new ActionRowBuilder<TextInputBuilder>().addComponents(vibeInput)
       );
 
+      // showModal 자동으로 interaction을 acknowledge 하지 않으므로 안전하게 호출
       await sel.showModal(modal);
       return;
     }
@@ -459,110 +381,187 @@ client.on('interactionCreate', async (interaction: Interaction) => {
   if (interaction.isModalSubmit()) {
     const modal = interaction as ModalSubmitInteraction;
     if (!modal.customId.startsWith('vote_modal_')) return;
-    await modal.deferReply({ ephemeral: true });
 
+    // don't defer reply too early — we'll reply at the end
     const postId = modal.customId.replace('vote_modal_', '');
     const song = parseInt(modal.fields.getTextInputValue('songScore'), 10);
     const design = parseInt(modal.fields.getTextInputValue('designScore'), 10);
     const vibe = parseInt(modal.fields.getTextInputValue('vibeScore'), 10);
+    const userId = modal.user.id;
 
     if ([song, design, vibe].some(n => isNaN(n) || n < 1 || n > 10)) {
-      await modal.editReply({ content: 'Scores must be numbers between 1 and 10.' });
+      await modal.reply({ content: 'Scores must be numbers between 1 and 10.', ephemeral: true });
       return;
     }
 
     const pendings = await loadPending();
     const lvl = pendings.find(p => p.postIdOrTag === postId);
     if (!lvl) {
-      await modal.editReply({ content: 'Selected level not found.' });
+      await modal.reply({ content: 'Selected level not found.', ephemeral: true });
       return;
     }
 
+    // 중복 투표 확인
+    if (lvl.voters && lvl.voters.includes(userId)) {
+      await modal.reply({ content: 'You have already voted for this level.', ephemeral: true });
+      return;
+    }
+
+    // 투표 저장
     lvl.votes.song.push(song);
     lvl.votes.design.push(design);
     lvl.votes.vibe.push(vibe);
+    lvl.voters.push(userId);
     await savePending(pendings);
 
-    await modal.editReply({ content: `Thanks — your vote for **${lvl.levelName}** has been recorded.` });
+    await modal.reply({ content: `Thanks — your vote for **${lvl.levelName}** has been recorded.`, ephemeral: true });
+    return;
+  }
+});
+
+// ---------------- message-based commands: !accept, !revote, !say ----------------
+client.on('messageCreate', async (message: Message) => {
+  if (message.author.bot) return;
+  if (!message.guild) return;
+  if (message.guild.id !== process.env.GUILD_ID) return;
+
+  // ----- !accept [threadID] (매니저 전용) -----
+  if (message.content.startsWith('!accept ')) {
+    const managerRoleName = process.env.MANAGER || '';
+    const managerRole = message.guild.roles.cache.find(r => r.name === managerRoleName);
+    if (!managerRole) {
+      await message.reply('Manager role not configured or not found.');
+      return;
+    }
+    if (!message.member?.roles.cache.has(managerRole.id)) {
+      await message.reply('❌ You do not have permission to use this command.');
+      return;
+    }
+
+    const threadId = message.content.slice('!accept '.length).trim();
+    if (!threadId) {
+      await message.reply('Usage: !accept [threadID]');
+      return;
+    }
+
+    // load existing pendings
+    const pendings = await loadPending();
+    if (pendings.find(p => p.postIdOrTag === threadId)) {
+      await message.reply('This thread is already accepted.');
+      return;
+    }
+
+    // try fetch thread for thumbnail & title
+    let thumbnailUrl = 'https://via.placeholder.com/150';
+    let levelName = threadId;
+    try {
+      const fetched = await client.channels.fetch(threadId);
+      if (fetched && fetched.isThread()) {
+        const thread = fetched;
+        levelName = thread.name ?? threadId;
+        const starter = await (thread as any).fetchStarterMessage().catch(() => null);
+        if (starter) {
+          const img = starter.attachments.find((a: any) => a.contentType?.startsWith('image/'));
+          if (img) thumbnailUrl = img.url;
+          else if (starter.embeds.length > 0) {
+            const e = starter.embeds[0];
+            thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
+          }
+        }
+      }
+    } catch (e) {
+      console.log('fetch thread failed or not thread:', e);
+    }
+
+    // push pending (with voters 초기화)
+    pendings.push({
+      postIdOrTag: threadId,
+      levelName,
+      authorId: message.author.id,
+      thumbnailUrl,
+      ranks: [],
+      votes: { song: [], design: [], vibe: [] },
+      voters: []
+    });
+
+    await savePending(pendings);
+    console.log('Pending levels saved:', pendings.length);
+
+    // announcement: 특정 채널로 보내기 (환경변수 VOTE_ANNOUNCE_CHANNEL_ID 사용)
+    const announceChannelId = process.env.VOTE_ANNOUNCE_CHANNEL_ID || message.channel.id;
+    const announceCh = await message.guild.channels.fetch(announceChannelId).catch(() => null);
+    const threadUrl = `https://discord.com/channels/${message.guild.id}/${process.env.FORUM_CHANNEL_ID || message.guild.id}/${threadId}`;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`${levelName} has been accepted!`)
+      .setURL(threadUrl)
+      .setDescription(`by <@${message.author.id}>`)
+      .setThumbnail(thumbnailUrl)
+      .setFooter({ text: 'Use /vote for This COOL Level!' })
+      .setColor('#00FF00')
+      .setTimestamp();
+
+    if (announceCh && announceCh.isTextBased()) {
+      await (announceCh as TextChannel).send({ embeds: [embed] });
+    } else {
+      await (message.channel as TextChannel).send({ embeds: [embed] });
+    }
+
+    await message.reply('Accepted and announced.');
+    return;
+  }
+
+  // ----- !revote [postId] (매니저 전용) -----
+  if (message.content.startsWith('!revote ')) {
+    const managerRoleName = process.env.MANAGER || '';
+    const managerRole = message.guild.roles.cache.find(r => r.name === managerRoleName);
+    if (!managerRole) {
+      await message.reply('Manager role not configured or not found.');
+      return;
+    }
+    if (!message.member?.roles.cache.has(managerRole.id)) {
+      await message.reply('❌ You do not have permission to use this command.');
+      return;
+    }
+
+    const postId = message.content.slice('!revote '.length).trim();
+    if (!postId) {
+      await message.reply('Usage: !revote [postId]');
+      return;
+    }
+
+    const pendings = await loadPending();
+    const lvl = pendings.find(p => p.postIdOrTag === postId);
+    if (!lvl) {
+      await message.reply('Level not found in pending list.');
+      return;
+    }
+
+    // 초기화: votes와 voters 비우기
+    lvl.votes = { song: [], design: [], vibe: [] };
+    lvl.voters = [];
+    await savePending(pendings);
+
+    // 공지: 투표 채널에 다시 투표하라고 알림
+    const votingChannelId = process.env.VOTING_CHANNEL_ID;
+    if (votingChannelId) {
+      const gch = await message.guild.channels.fetch(votingChannelId).catch(() => null);
+      if (gch && (gch as TextChannel).isTextBased && (gch as TextChannel).isTextBased()) {
+        await (gch as TextChannel).send(`🔄 Voting for **${lvl.levelName}** (${lvl.postIdOrTag}) has been reset by <@${message.author.id}>. Please vote again using /vote!`);
+      }
+    }
+
+    await message.reply(`Votes for ${lvl.levelName} have been reset and voters cleared.`);
     return;
   }
 });
 
 // ---------------- message-based !say command ----------------
 client.on('messageCreate', async (message: Message) => {
-  if (message.author.bot) return;
-  if (!message.guild) return;
-  if (message.guild.id !== process.env.GUILD_ID) return;
-
-  const PREFIX = '!say';
-  if (!message.content.startsWith(PREFIX)) return;
-
-  const member = message.member;
-  if (!member) return;
-
-  const baseRoleName = process.env.MANAGER || '';
-  const baseRole = message.guild.roles.cache.find(r => r.name === baseRoleName);
-  if (!baseRole) {
-    await message.reply(`Base role "${baseRoleName}" not found.`);
-    return;
-  }
-  if (member.roles.highest.position < baseRole.position) {
-    await message.reply('❌ You do not have permission to use this command.');
-    return;
-  }
-
-  const raw = message.content.slice(PREFIX.length).trim();
-  const args = parseArgs(raw);
-  if (args.length < 2) {
-    await message.reply('❌ Usage: !say [#channel or channelID] "content" "title(optional)" "description(optional)" "imageURL(optional)" "color(optional)"');
-    return;
-  }
-
-  const channelArg = args[0];
-  const mention = channelArg.match(/^<#(\d+)>$/);
-  const channelId = mention ? mention[1] : channelArg;
-  const ch = message.guild.channels.cache.get(channelId);
-  if (!ch || !ch.isTextBased()) {
-    await message.reply('❌ Provide a valid text channel mention or ID.');
-    return;
-  }
-  const target = ch as TextChannel;
-
-  const content = args[1];
-  const title = args[2] || '';
-  const description = args[3] || '';
-  const imageUrl = args[4] || '';
-  const colorInput = args[5] || '#5865F2'; // 기본 색상
-
-  const colorInputStr = (colorInput ?? '#5865F2').toString();
-  const isValidHexColor = /^#([0-9A-F]{6}|[0-9A-F]{3})$/i.test(colorInputStr);
-  const embedColor = isValidHexColor ? parseInt(colorInputStr.replace('#', ''), 16) : 0x5865F2;
-
-  const embed = new EmbedBuilder()
-    .setColor(embedColor)
-    .setDescription(`**${content}**`)
-    .setTimestamp();
-
-  if (title) embed.setTitle(`📢 ${title}`);
-  if (description) embed.setFooter({ text: description, iconURL: client.user?.displayAvatarURL() ?? undefined });
-  if (imageUrl && imageUrl.trim() !== '') {
-    embed.setImage(imageUrl);
-  }
-
-  try {
-    await target.send({ embeds: [embed] });
-    const emojiId = process.env.REACTION_EMOJI_ID;
-    if (emojiId) {
-      await message.react(emojiId).catch(() => { /* ignore */ });
-    } else {
-      await message.react('1404415892120539216').catch(() => { /* ignore non-custom */ });
-    }
-  } catch (e) {
-    console.error('!say send failed', e);
-    await message.reply('❌ Failed to send message.');
-  }
+  // !say 처리 - 이미 이전에 구현되어 있었다면 중복으로 두지 마세요.
+  // 이 블록은 이미 messageCreate 이벤트에서 처리되므로, 필요하면 기존 !say 핸들러와 합치세요.
+  // (여기선 이미 위에서 messageCreate 핸들러가 등록되어 있으니 중복 주의)
 });
-
 
 // ---------------- start HTTP server for uptime ping ----------------
 const port = process.env.PORT || 3000;
