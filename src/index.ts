@@ -51,9 +51,6 @@ let authClient: any = null;
 let docs: docs_v1.Docs | null = null;
 const googleDocId = process.env.GOOGLE_DOC_ID || null;
 
-if (authClient && googleDocId) {
-  docs = google.docs({ version: 'v1', auth: authClient });
-}
 
 if (GOOGLE_SERVICE_ACCOUNT) {
   try {
@@ -67,6 +64,9 @@ if (GOOGLE_SERVICE_ACCOUNT) {
     ],
   } as any);
     drive = google.drive({ version: 'v3', auth: authClient });
+    if (authClient && googleDocId) {
+      docs = google.docs({ version: 'v1', auth: authClient });
+    }
   } catch (e) {
     console.error('Failed to init Google service account:', e);
     drive = null;
