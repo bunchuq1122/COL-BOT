@@ -537,10 +537,18 @@ client.on('messageCreate', async (message: Message) => {
     const announceCh = await message.guild.channels.fetch(announceChannelId).catch(() => null);
     const threadUrl = `https://discord.com/channels/${message.guild.id}/${process.env.FORUM_CHANNEL_ID || message.guild.id}/${threadId}`;
 
+    // creator가 <@...> 형식이 아니면 멘션으로 변환
+    let creatorMention = creator;
+    if (creator && !/^<@!?(\d+)>$/.test(creator)) {
+      // creator가 userId라면 멘션으로
+      creatorMention = `<@${creator}>`;
+    }
+
+    
     const embed = new EmbedBuilder()
       .setTitle(`'${levelName}' | has been accepted!`)
       .setURL(threadUrl)
-      .setDescription(`by ${creator}`)
+      .setDescription(`by ${creatorMention || 'Unknown'}`)
       .setThumbnail(thumbnailUrl)
       .setFooter({ text: 'Use /vote for This COOL Level!' + roleMention(process.env.VOTING_NOTIFICATION || 'voting notification') })
       .setColor('#00FF00')
