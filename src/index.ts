@@ -483,22 +483,22 @@ client.on('messageCreate', async (message: Message) => {
         const channel = fetched as TextChannel;
         const postMsg = await channel.messages.fetch(threadId).catch(() => null);
         if (postMsg) {
-          const content = postMsg.content;
-          // 여러 줄 대응 정규식 (각 줄의 시작에서 찾음)
-          const nameMatch = content.match(/^\s*name\s*:\s*([^\r\n]+)/im);
-          const idMatch = content.match(/^\s*id\s*:\s*([^\r\n]+)/im);
-          // 제작자: 포스트 메시지의 작성자 멘션
-          creator = `<@${postMsg.author.id}>`;
-          levelName = nameMatch ? nameMatch[1].trim() : '';
-          levelId = idMatch ? idMatch[1].trim() : '';
-          // 썸네일 추출
-          const img = postMsg.attachments.find(a => a.contentType?.startsWith('image/'));
-          if (img) thumbnailUrl = img.url;
-          else if (postMsg.embeds.length > 0) {
-            const e = postMsg.embeds[0];
-            thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
-          }
-        }
+  const content = postMsg.content;
+  // name 추출 (줄 앞 공백 포함, 영어/한글 모두 대응)
+  const nameMatch = content.match(/^\s*name\s*:\s*([^\r\n]+)/im);
+  levelName = nameMatch ? nameMatch[1].trim() : '';
+  // 제작자: 포스트 메시지의 작성자 멘션
+  creator = `<@${postMsg.author.id}>`;
+  // 썸네일 추출
+  const img = postMsg.attachments.find(a => a.contentType?.startsWith('image/'));
+  if (img) thumbnailUrl = img.url;
+  else if (postMsg.embeds.length > 0) {
+    const e = postMsg.embeds[0];
+    thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
+  }
+  // 디버깅용 로그
+  if (!nameMatch) console.log('name not found in post:', content);
+}
       }
     } catch (e) {
       console.log('fetch post failed:', e);
