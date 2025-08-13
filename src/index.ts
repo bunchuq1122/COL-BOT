@@ -467,10 +467,10 @@ client.on('messageCreate', async (message: Message) => {
         const postMsg = await channel.messages.fetch(threadId).catch(() => null);
         if (postMsg) {
           const content = postMsg.content;
-          // 정규식 추출
-          const nameMatch = content.match(/name\s*:\s*(.+)/i);
-          const idMatch = content.match(/id\s*:\s*(.+)/i);
-          const creatorMatch = content.match(/creator\s*:\s*(.+)/i);
+          // 여러 줄 대응 정규식 (각 줄의 시작에서 찾음)
+          const nameMatch = content.match(/^name\s*:\s*(.+)$/im);
+          const idMatch = content.match(/^id\s*:\s*(.+)$/im);
+          const creatorMatch = content.match(/^creator\s*:\s*(.+)$/im);
           levelName = nameMatch ? nameMatch[1].trim() : '';
           levelId = idMatch ? idMatch[1].trim() : '';
           creator = creatorMatch ? creatorMatch[1].trim() : message.author.id;
