@@ -457,7 +457,7 @@ client.on('messageCreate', async (message: Message) => {
 
     // 포스트 내용에서 name, id, creator 추출
     let thumbnailUrl = 'https://via.placeholder.com/150';
-    let levelName = threadId;
+    let levelName = '';
     let levelId = '';
     let creator = '';
     try {
@@ -471,7 +471,7 @@ client.on('messageCreate', async (message: Message) => {
           const nameMatch = content.match(/name\s*:\s*(.+)/i);
           const idMatch = content.match(/id\s*:\s*(.+)/i);
           const creatorMatch = content.match(/creator\s*:\s*(.+)/i);
-          levelName = nameMatch ? nameMatch[1].trim() : threadId;
+          levelName = nameMatch ? nameMatch[1].trim() : '';
           levelId = idMatch ? idMatch[1].trim() : '';
           creator = creatorMatch ? creatorMatch[1].trim() : message.author.id;
 
@@ -487,6 +487,9 @@ client.on('messageCreate', async (message: Message) => {
     } catch (e) {
       console.log('fetch post failed:', e);
     }
+
+    // levelName이 없으면 threadId로 fallback
+    if (!levelName) levelName = threadId;
 
     // push pending (with voters 초기화)
     pendings.push({
