@@ -88,14 +88,17 @@ type PendingLevel = {
 
 async function getLevelInfo(guild: any, postIdOrTag: string): Promise<{ name: string, creator: string }> {
   try {
-    const channel = await guild.channels.fetch(process.env.FORUM_CHANNEL_ID || '') as TextChannel;
-    if (!channel) return { name: postIdOrTag, creator: '' };
-    const postMsg = await channel.messages.fetch(postIdOrTag).catch(() => null);
-    if (!postMsg) return { name: postIdOrTag, creator: '' };
-    const lines = postMsg.content.split('\n');
-    const name = lines[0].replace(/^name\s*:\s*/i, '').trim();
-    const creator = postMsg.member?.displayName || postMsg.author.username;
-    return { name, creator };
+    const forumChannelRaw = await guild.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
+    if (forumChannelRaw && forumChannelRaw.type === 15) { // 15 = GuildForum
+      const forumChannel = forumChannelRaw as any;
+      const thread = await forumChannel.threads.fetch(postIdOrTag).catch(() => null);
+      if (thread && thread.isTextBased()) {
+        const name = thread.name;
+        const creator = thread.ownerId ? `<@${thread.ownerId}>` : '';
+        return { name, creator };
+      }
+    }
+    return { name: postIdOrTag, creator: '' };
   } catch {
     return { name: postIdOrTag, creator: '' };
   }
@@ -485,31 +488,29 @@ client.on('messageCreate', async (message: Message) => {
       const forumChannelRaw = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
       // ForumChannel 타입 체크
       if (forumChannelRaw && forumChannelRaw.type === 15) { // 15 = GuildForum
-        const forumChannel = forumChannelRaw as any; // Discord.js v14: ForumChannel
-        // 스레드(포스트) fetch
-        const thread = await forumChannel.threads.fetch(threadId).catch(() => null);
-        if (thread && thread.isTextBased()) {
-          // 제목: 스레드의 name
-          levelName = thread.name;
-          // 게시자 멘션: thread.ownerId
-          creator = thread.ownerId ? `<@${thread.ownerId}>` : '';
-          // 첫 메시지에서 썸네일 추출
-          const firstMsg = await thread.messages.fetch({ limit: 1 })
-          .then((msgs: Collection<string, Message>) => msgs.first() ?? null)
-          .catch(() => null);
-          if (firstMsg) {
-            const img: import('discord.js').Attachment | undefined = firstMsg.attachments.find((a: import('discord.js').Attachment) => a.contentType?.startsWith('image/'));
-            if (img) thumbnailUrl = img.url;
-            else if (firstMsg.embeds.length > 0) {
-              const e = firstMsg.embeds[0];
-              thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
-            }
-          }
-        } else {
-          console.log('❌ thread fetch failed for threadId:', threadId);
+      const forumChannel = forumChannelRaw as any; // Discord.js v14: ForumChannel
+      // 스레드(포스트) fetch
+      const thread = await forumChannel.threads.fetch(threadId).catch(() => null);
+      if (thread && thread.isTextBased()) {
+        levelName = thread.name;
+        creator = thread.ownerId ? `<@${thread.ownerId}>` : '';
+        // 썸네일 추출
+        const firstMsg = await thread.messages.fetch({ limit: 1 })
+        .then((msgs: Collection<string, Message>) => msgs.first() ?? null)
+        .catch(() => null);
+        if (firstMsg) {
+        const img = firstMsg.attachments.find((a: import('discord.js').Attachment) => a.contentType?.startsWith('image/'));
+        if (img) thumbnailUrl = img.url;
+        else if (firstMsg.embeds.length > 0) {
+          const e = firstMsg.embeds[0];
+          thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
+        }
         }
       } else {
-        console.log('❌ FORUM_CHANNEL_ID is not a forum channel!');
+        console.log('❌ thread fetch failed for threadId:', threadId);
+      }
+      } else {
+      console.log('❌ FORUM_CHANNEL_ID is not a forum channel!');
       }
     } catch (e) {
       console.log('fetch thread failed:', e);
@@ -804,28 +805,24 @@ client.on('messageCreate', async (message: Message) => {
 
   // 각 pending의 메시지에서 name, id, creator 추출
   async function extractInfoFromPost(postIdOrTag: string): Promise<{ name: string, id: string, creator: string }> {
-    try {
-      // 스레드 메시지 fetch
-      const channel = await message.guild?.channels.fetch(process.env.FORUM_CHANNEL_ID || '') as TextChannel;
-      if (!channel) return { name: '', id: '', creator: '' };
-      const postMsg = await channel.messages.fetch(postIdOrTag).catch(() => null);
-      if (!postMsg) return { name: '', id: '', creator: '' };
-      const content = postMsg.content;
-
-      // 정규식 추출
-      const nameMatch = content.match(/^\s*name\s*:\s*([^\r\n]+)/im);
-      const idMatch = content.match(/^id\s*:\s*([^\r\n]+)/im);
-      const creatorMatch = content.match(/^creator\s*:\s*([^\r\n]+)/im);;
-
-      return {
-        name: nameMatch ? nameMatch[1].trim() : '',
-        id: idMatch ? idMatch[1].trim() : '',
-        creator: creatorMatch ? creatorMatch[1].trim() : ''
-      };
-    } catch {
-      return { name: '', id: '', creator: '' };
+  try {
+    const forumChannelRaw = await message.guild?.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
+    if (forumChannelRaw && forumChannelRaw.type === 15) {
+      const forumChannel = forumChannelRaw as any;
+      const thread = await forumChannel.threads.fetch(postIdOrTag).catch(() => null);
+      if (thread && thread.isTextBased()) {
+        return {
+          name: thread.name,
+          id: thread.id,
+          creator: thread.ownerId ? `<@${thread.ownerId}>` : ''
+        };
+      }
     }
+    return { name: '', id: '', creator: '' };
+  } catch {
+    return { name: '', id: '', creator: '' };
   }
+}
 
   // 모든 레벨 정보 추출
   const levelInfos = await Promise.all(
