@@ -458,9 +458,14 @@ client.on('messageCreate', async (message: Message) => {
       return;
     }
 
-    const threadId = message.content.slice(acceptPrefix.length).trim();
+    const threadInput = message.content.slice(acceptPrefix.length).trim();
+    // 링크에서 threadId 추출
+    let threadId = threadInput;
+    const urlMatch = threadInput.match(/discord\.com\/channels\/\d+\/\d+\/(\d+)/);
+    if (urlMatch) threadId = urlMatch[1];
+
     if (!threadId) {
-      await message.reply('Usage: !accept [threadID]');
+      await message.reply('Usage: !accept [thread link or threadID]');
       return;
     }
 
@@ -471,44 +476,36 @@ client.on('messageCreate', async (message: Message) => {
       return;
     }
 
-    // 포스트 내용에서 name, id, creator 추출
+    // 포스트 내용에서 name, creator 추출
     let thumbnailUrl = 'https://via.placeholder.com/150';
     let levelName = '';
     let creator = '';
     try {
-      const fetched = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
-      if (fetched && fetched.isTextBased && fetched.isTextBased()) {
-        const channel = fetched as TextChannel;
-        // threadId가 메시지 ID가 아니라 스레드(포럼) ID라면, 해당 스레드의 첫 메시지를 가져와야 함
-        let postMsg = await channel.messages.fetch(threadId).catch(() => null);
-
-        // 만약 postMsg가 null이면, 스레드(포럼) 채널에서 해당 스레드를 찾아 첫 메시지를 가져오기
-        if (!postMsg && channel.threads) {
-          const thread = await channel.threads.fetch(threadId).catch(() => null);
-          if (thread && thread.isTextBased()) {
-            postMsg = await thread.messages.fetch({ limit: 1 }).then(msgs => msgs.first() ?? null).catch(() => null);
-          }
-        }
-
-        if (postMsg) {
-          // 제목: 첫 줄에서 name 추출
-          const lines = postMsg.content.split('\n');
-          levelName = lines[0].replace(/^name\s*:\s*/i, '').trim();
-          // 제작자: 포스트 메시지의 작성자 멘션
-          creator = `<@${postMsg.author.id}>`;
-          // 썸네일 추출
-          const img = postMsg.attachments.find(a => a.contentType?.startsWith('image/'));
-          if (img) thumbnailUrl = img.url;
-          else if (postMsg.embeds.length > 0) {
-            const e = postMsg.embeds[0];
-            thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
+      const forumChannel = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
+      if (forumChannel && forumChannel.isTextBased && forumChannel.isTextBased() && 'threads' in forumChannel) {
+        // 스레드(포스트) fetch
+        const thread = await forumChannel.threads.fetch(threadId).catch(() => null);
+        if (thread && thread.isTextBased()) {
+          // 제목: 스레드의 name
+          levelName = thread.name;
+          // 게시자 멘션: thread.ownerId
+          creator = thread.ownerId ? `<@${thread.ownerId}>` : '';
+          // 첫 메시지에서 썸네일 추출
+          const firstMsg = await thread.messages.fetch({ limit: 1 }).then(msgs => msgs.first() ?? null).catch(() => null);
+          if (firstMsg) {
+            const img = firstMsg.attachments.find(a => a.contentType?.startsWith('image/'));
+            if (img) thumbnailUrl = img.url;
+            else if (firstMsg.embeds.length > 0) {
+              const e = firstMsg.embeds[0];
+              thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
+            }
           }
         } else {
-          console.log('❌ postMsg fetch failed for threadId:', threadId);
+          console.log('❌ thread fetch failed for threadId:', threadId);
         }
       }
     } catch (e) {
-      console.log('fetch post failed:', e);
+      console.log('fetch thread failed:', e);
     }
 
     // levelName이 없으면 threadId로 fallback
