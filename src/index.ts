@@ -472,10 +472,9 @@ client.on('messageCreate', async (message: Message) => {
         if (postMsg) {
           const content = postMsg.content;
           // 여러 줄 대응 정규식 (각 줄의 시작에서 찾음)
-          const nameMatch = content.match(/^name\s*:\s*([^\r\n]+)/im);
-          const idMatch = content.match(/^id\s*:\s*([^\r\n]+)/im);
-          const creatorMatch = content.match(/^creator\s*:\s*([^\r\n]+)/im);
-          levelName = nameMatch ? nameMatch[1].trim() : '';
+          const nameMatch = content.match(/^\s*name\s*:\s*([^\r\n]+)/im);
+          const idMatch = content.match(/^\s*id\s*:\s*([^\r\n]+)/im);
+          const creatorMatch = content.match(/^\s*creator\s*:\s*([^\r\n]+)/im);
           levelId = idMatch ? idMatch[1].trim() : '';
           creator = creatorMatch ? creatorMatch[1].trim() : message.author.id;
 
