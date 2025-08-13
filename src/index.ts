@@ -17,7 +17,11 @@ import {
   StringSelectMenuInteraction,
   ModalSubmitInteraction,
   Message,
-  roleMention
+  roleMention,
+  ButtonBuilder,
+  ButtonStyle,
+  InteractionType,
+  ComponentType
 } from 'discord.js';
 import * as dotenv from 'dotenv';
 import http from 'http';
@@ -820,6 +824,138 @@ client.on('messageCreate', async (message: Message) => {
     console.error('Ranking save failed!:', e);
     await message.reply('❌ Google Docs save failed.');
   }
+});
+
+// ================ !remove command ================
+client.on('messageCreate', async (message: Message) => {
+  if (message.author.bot) return;
+  if (!message.guild) return;
+  if (message.guild.id !== process.env.GUILD_ID) return;
+
+  const removePrefixes = ['!remove', '!rmv', '!r'];
+  const removePrefix = removePrefixes.find(prefix => message.content.startsWith(prefix));
+  if (!removePrefix) return;
+
+  // 권한 체크
+  const managerRoleName = process.env.MANAGER || '';
+  const managerRole = message.guild.roles.cache.find(r => r.name === managerRoleName);
+  if (!managerRole) {
+    await message.reply('Manager role not configured or not found.');
+    return;
+  }
+  if (!message.member?.roles.cache.has(managerRole.id)) {
+    await message.reply('❌ You do not have permission to use this command.');
+    return;
+  }
+
+  // pending 목록 불러오기
+  const pendings = await loadPending();
+  if (pendings.length === 0) {
+    await message.reply('No levels to remove.');
+    return;
+  }
+
+  // 선택 메뉴 생성
+  const options = pendings.slice(0, 25).map(p => ({
+    label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
+    description: p.postIdOrTag,
+    value: p.postIdOrTag
+  }));
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId('remove_level_select')
+    .setPlaceholder('Select a level to remove')
+    .addOptions(options);
+
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+  // 일반 메시지 reply에는 ephemeral 사용 불가
+  await message.reply({ content: 'Select a level to remove:', components: [row] });
+});
+
+// select menu → 모달
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isStringSelectMenu()) return;
+  if (interaction.customId !== 'remove_level_select') return;
+
+  const postIdOrTag = interaction.values[0];
+
+  // 이유 입력 모달
+  const modal = new ModalBuilder()
+    .setCustomId(`remove_reason_modal_${postIdOrTag}`)
+    .setTitle('Remove Level - Reason');
+
+  const reasonInput = new TextInputBuilder()
+    .setCustomId('removeReason')
+    .setLabel('Reason for removal')
+    .setStyle(TextInputStyle.Paragraph)
+    .setPlaceholder('Enter the reason for removing this level')
+    .setRequired(true);
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(reasonInput)
+  );
+
+  await interaction.showModal(modal);
+});
+
+// 모달 제출 → 삭제 및 announce embed
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isModalSubmit()) return;
+  if (!interaction.customId.startsWith('remove_reason_modal_')) return;
+
+  const postIdOrTag = interaction.customId.replace('remove_reason_modal_', '');
+  const reason = interaction.fields.getTextInputValue('removeReason');
+
+  // 권한 체크
+  const guild = interaction.guild;
+  if (!guild) return;
+  const managerRoleName = process.env.MANAGER || '';
+  const managerRole = guild.roles.cache.find(r => r.name === managerRoleName);
+  const member = await guild.members.fetch(interaction.user.id);
+  if (!managerRole || !member.roles.cache.has(managerRole.id)) {
+    await interaction.reply({ content: '❌ You do not have permission to use this command.', ephemeral: true });
+    return;
+  }
+
+  // pending에서 삭제
+  const pendings = await loadPending();
+  const idx = pendings.findIndex(p => p.postIdOrTag === postIdOrTag);
+  if (idx === -1) {
+    await interaction.reply({ content: 'Level not found in pending list.', ephemeral: true });
+    return;
+  }
+  const removed = pendings.splice(idx, 1)[0];
+  await savePending(pendings);
+
+  // announce 채널로 embed 전송
+  const announceChannelId = process.env.VOTE_ANNOUNCE_CHANNEL_ID || interaction.channelId;
+  let announceCh: TextChannel | null = null;
+  if (announceChannelId) {
+    const ch = await guild.channels.fetch(announceChannelId).catch(() => null);
+    if (ch && ch.isTextBased()) announceCh = ch as TextChannel;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle(`'${removed.levelName}' has been removed`)
+    .setDescription('Its. sad')
+    .setFooter({ text: `reason : ${reason}` })
+    .setColor('#FF0000')
+    .setTimestamp();
+
+  // 썸네일(이미지) 추가 (env에 REMOVE_THUMBNAIL_URL 있으면)
+  if (process.env.REMOVE_THUMBNAIL_URL) {
+    embed.setThumbnail(process.env.REMOVE_THUMBNAIL_URL);
+  }
+
+  // .send는 TextChannel에서만 사용
+  if (announceCh && announceCh.isTextBased()) {
+    await (announceCh as TextChannel).send({ embeds: [embed] });
+  } else if (interaction.channel && interaction.channel.isTextBased()) {
+    await (interaction.channel as TextChannel).send({ embeds: [embed] });
+  }
+
+  await interaction.reply({ content: `✅ Level **${removed.levelName}** has been removed.`, ephemeral: true });
 });
 
 
