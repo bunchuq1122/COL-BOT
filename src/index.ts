@@ -545,10 +545,25 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     
+    // 포스트 게시자 멘션 추출
+    let creatorUserMention = creatorMention;
+    try {
+      const forumChannelRaw = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
+      if (forumChannelRaw && forumChannelRaw.type === 15) { // 15 = GuildForum
+      const forumChannel = forumChannelRaw as any;
+      const thread = await forumChannel.threads.fetch(threadId).catch(() => null);
+      if (thread && thread.ownerId) {
+        creatorUserMention = `<@${thread.ownerId}>`;
+      }
+      }
+    } catch (e) {
+      // fallback to creatorMention
+    }
+
     const embed = new EmbedBuilder()
       .setTitle(`'${levelName}' | has been accepted!`)
       .setURL(threadUrl)
-      .setDescription(`by ${creatorMention || 'Unknown'}`)
+      .setDescription(`by ${creatorUserMention || 'Unknown'}`)
       .setThumbnail(thumbnailUrl)
       .setFooter({ text: 'Use /vote for This COOL Level!' + roleMention(process.env.VOTING_NOTIFICATION || 'voting notification') })
       .setColor('#00FF00')
