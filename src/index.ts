@@ -479,7 +479,17 @@ client.on('messageCreate', async (message: Message) => {
       const fetched = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
       if (fetched && fetched.isTextBased && fetched.isTextBased()) {
         const channel = fetched as TextChannel;
-        const postMsg = await channel.messages.fetch(threadId).catch(() => null);
+        // threadId가 메시지 ID가 아니라 스레드(포럼) ID라면, 해당 스레드의 첫 메시지를 가져와야 함
+        let postMsg = await channel.messages.fetch(threadId).catch(() => null);
+
+        // 만약 postMsg가 null이면, 스레드(포럼) 채널에서 해당 스레드를 찾아 첫 메시지를 가져오기
+        if (!postMsg && channel.threads) {
+          const thread = await channel.threads.fetch(threadId).catch(() => null);
+          if (thread && thread.isTextBased()) {
+            postMsg = await thread.messages.fetch({ limit: 1 }).then(msgs => msgs.first() ?? null).catch(() => null);
+          }
+        }
+
         if (postMsg) {
           // 제목: 첫 줄에서 name 추출
           const lines = postMsg.content.split('\n');
@@ -493,6 +503,8 @@ client.on('messageCreate', async (message: Message) => {
             const e = postMsg.embeds[0];
             thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
           }
+        } else {
+          console.log('❌ postMsg fetch failed for threadId:', threadId);
         }
       }
     } catch (e) {
