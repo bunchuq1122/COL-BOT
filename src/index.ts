@@ -123,19 +123,20 @@ async function savePending(data: PendingLevel[]) {
       const content = doc.data.body?.content;
       const endIndex = content ? content[content.length - 1].endIndex || 1 : 1;
 
-      const requests: docs_v1.Schema$Request[] = [];
+      const docText = JSON.stringify(data, null, 2); // <-- 추가
 
-      if (endIndex > 1) {
+      const requests: docs_v1.Schema$Request[] = [];
+      // endIndex > 2일 때만 삭제 요청 (빈 문서면 삭제하지 않음)
+      if (endIndex > 2) {
         requests.push({
           deleteContentRange: {
             range: { startIndex: 1, endIndex: endIndex - 1 },
           },
         });
       }
-
       requests.push({
         insertText: {
-          text: JSON.stringify(data, null, 2),
+          text: docText,
           location: { index: 1 },
         },
       });
