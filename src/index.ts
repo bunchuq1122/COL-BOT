@@ -308,17 +308,17 @@ client.on('messageCreate', async (message: Message) => {
           creator = thread.ownerId ? `<@${thread.ownerId}>` : '';
 
           const firstMsg = await thread.messages.fetch({ limit: 1 })
-          .then((msgs: Collection<string, Message>) => msgs.first() ?? null)
-          .catch(() => null);
+  .then((msgs: any) => msgs.first() ?? null)
+  .catch(() => null);
 
-          if (firstMsg) {
-            const img = firstMsg.attachments.find((a: import('discord.js').Attachment) => a.contentType?.startsWith('image/'));
-            if (img) thumbnailUrl = img.url;
-            else if (firstMsg.embeds.length > 0) {
-              const e = firstMsg.embeds[0];
-              thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
-            }
-          }
+if (firstMsg) {
+  const img = firstMsg.attachments.find((a: any) => a.contentType?.startsWith('image/'));
+  if (img) thumbnailUrl = img.url;
+  else if (firstMsg.embeds.length > 0) {
+    const e = firstMsg.embeds[0];
+    thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
+  }
+}
         }
       }
     } catch (e) {
