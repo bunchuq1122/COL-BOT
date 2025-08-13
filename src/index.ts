@@ -779,7 +779,7 @@ client.on('messageCreate', async (message: Message) => {
       const content = postMsg.content;
 
       // 정규식 추출
-      const nameMatch = content.match(/^name\s*:\s*([^\r\n]+)/im);
+      const nameMatch = content.match(/^\s*name\s*:\s*([^\r\n]+)/im);
       const idMatch = content.match(/^id\s*:\s*([^\r\n]+)/im);
       const creatorMatch = content.match(/^creator\s*:\s*([^\r\n]+)/im);;
 
@@ -875,7 +875,8 @@ client.on('messageCreate', async (message: Message) => {
   // 선택 메뉴 생성 (제목: 레벨명, 설명: 개발자)
   const options = pendings.slice(0, 25).map((p, i) => ({
     label: levelInfos[i].name.length > 100 ? levelInfos[i].name.slice(0, 97) + '...' : levelInfos[i].name,
-    description: levelInfos[i].creator,
+    // description이 빈 문자열이면 undefined로!
+    description: levelInfos[i].creator && levelInfos[i].creator.length > 0 ? levelInfos[i].creator : undefined,
     value: p.postIdOrTag
   }));
 
