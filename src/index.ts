@@ -1,6 +1,7 @@
 // src/index.ts
 import {
   Client,
+  Collection,
   GatewayIntentBits,
   Partials,
   TextChannel,
@@ -481,8 +482,10 @@ client.on('messageCreate', async (message: Message) => {
     let levelName = '';
     let creator = '';
     try {
-      const forumChannel = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
-      if (forumChannel && forumChannel.isTextBased && forumChannel.isTextBased() && 'threads' in forumChannel) {
+      const forumChannelRaw = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
+      // ForumChannel 타입 체크
+      if (forumChannelRaw && forumChannelRaw.type === 15) { // 15 = GuildForum
+        const forumChannel = forumChannelRaw as any; // Discord.js v14: ForumChannel
         // 스레드(포스트) fetch
         const thread = await forumChannel.threads.fetch(threadId).catch(() => null);
         if (thread && thread.isTextBased()) {
@@ -491,9 +494,11 @@ client.on('messageCreate', async (message: Message) => {
           // 게시자 멘션: thread.ownerId
           creator = thread.ownerId ? `<@${thread.ownerId}>` : '';
           // 첫 메시지에서 썸네일 추출
-          const firstMsg = await thread.messages.fetch({ limit: 1 }).then(msgs => msgs.first() ?? null).catch(() => null);
+          const firstMsg = await thread.messages.fetch({ limit: 1 })
+          .then((msgs: Collection<string, Message>) => msgs.first() ?? null)
+          .catch(() => null);
           if (firstMsg) {
-            const img = firstMsg.attachments.find(a => a.contentType?.startsWith('image/'));
+            const img: import('discord.js').Attachment | undefined = firstMsg.attachments.find((a: import('discord.js').Attachment) => a.contentType?.startsWith('image/'));
             if (img) thumbnailUrl = img.url;
             else if (firstMsg.embeds.length > 0) {
               const e = firstMsg.embeds[0];
@@ -503,6 +508,8 @@ client.on('messageCreate', async (message: Message) => {
         } else {
           console.log('❌ thread fetch failed for threadId:', threadId);
         }
+      } else {
+        console.log('❌ FORUM_CHANNEL_ID is not a forum channel!');
       }
     } catch (e) {
       console.log('fetch thread failed:', e);
