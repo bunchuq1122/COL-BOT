@@ -494,7 +494,7 @@ client.on('messageCreate', async (message: Message) => {
     const threadUrl = `https://discord.com/channels/${message.guild.id}/${process.env.FORUM_CHANNEL_ID || message.guild.id}/${threadId}`;
 
     const embed = new EmbedBuilder()
-      .setTitle(`'${levelName}' has been accepted!`)
+      .setTitle(`'${levelName}' | has been accepted!`)
       .setURL(threadUrl)
       .setDescription(`by <@${message.author.id}>`)
       .setThumbnail(thumbnailUrl)
@@ -681,6 +681,96 @@ client.on('messageCreate', async (message: Message) => {
   const rrozyMention = roleMention(process.env.RROZY || '1404793396404682793');
   if (message.channel.isTextBased()) {
     await (message.channel as TextChannel).send(`${rrozyMention} fucked by ${member.toString()} ${count} times!`);
+  }
+});
+
+// ---- Save ranked levels to Google Docs (manager only) ----
+client.on('messageCreate', async (message: Message) => {
+  if (message.author.bot) return;
+  if (!message.guild) return;
+  if (message.guild.id !== process.env.GUILD_ID) return;
+
+  if (!message.content.startsWith('!saveranked')) return;
+
+  // 매니저 권한 확인
+  const managerRoleName = process.env.MANAGER || '';
+  const managerRole = message.guild.roles.cache.find(r => r.name === managerRoleName);
+  if (!managerRole) {
+    await message.reply('Manager role not configured or not found.');
+    return;
+  }
+  if (!message.member?.roles.cache.has(managerRole.id)) {
+    await message.reply('❌ You do not have permission to use this command.');
+    return;
+  }
+
+  // 새 Google Docs ID
+  const rankedDocId = process.env.GOOGLE_RANKED_DOC_ID;
+  if (!rankedDocId) {
+    await message.reply('GOOGLE_RANKED_DOC_ID need env var.');
+    return;
+  }
+  if (!authClient) {
+    await message.reply('Google 인증이 필요합니다.');
+    return;
+  }
+  const rankedDocs = google.docs({ version: 'v1', auth: authClient });
+
+  // 데이터 불러오기 및 정렬
+  const pendings = await loadPending();
+  const scored = pendings
+    .filter(p => p.votes && p.votes.song.length > 0)
+    .map(p => {
+      const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+      const s = avg(p.votes.song);
+      const d = avg(p.votes.design);
+      const v = avg(p.votes.vibe);
+      const overall = (s + d + v) / 3;
+      return { ...p, overall, s, d, v };
+    })
+    .sort((a, b) => b.overall - a.overall);
+
+  if (scored.length === 0) {
+    await message.reply('No levels yet.');
+    return;
+  }
+
+  // 포맷팅
+  const lines: string[] = scored.map((p, i) =>
+    `${i + 1}. ${p.levelName} by <@${p.authorId}> | ${p.postIdOrTag}\n   Song: ${p.s.toFixed(2)}, Design: ${p.d.toFixed(2)}, Vibe: ${p.v.toFixed(2)}, Overall: ${p.overall.toFixed(2)}`
+  );
+  const docText = lines.join('\n\n');
+
+  // 기존 내용 삭제 후 새로 입력
+  try {
+    const doc = await rankedDocs.documents.get({ documentId: rankedDocId });
+    const content = doc.data.body?.content;
+    const endIndex = content ? content[content.length - 1].endIndex || 1 : 1;
+
+    const requests: docs_v1.Schema$Request[] = [];
+    if (endIndex > 1) {
+      requests.push({
+        deleteContentRange: {
+          range: { startIndex: 1, endIndex: endIndex - 1 },
+        },
+      });
+    }
+    requests.push({
+      insertText: {
+        text: docText,
+        location: { index: 1 },
+      },
+    });
+
+    await rankedDocs.documents.batchUpdate({
+      documentId: rankedDocId,
+      requestBody: { requests },
+    });
+
+    await message.reply('✅ Ranking has been saved!.');
+  } catch (e) {
+    console.error('Ranking save failed!:', e);
+    await message.reply('❌ Google Docs save failed.');
   }
 });
 
