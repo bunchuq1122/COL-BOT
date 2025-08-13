@@ -628,7 +628,7 @@ const { id: threadId, error } = getThreadId(threadInput);
       .setURL(threadUrl)
       .setDescription(`by ${creatorUserMention || 'Unknown'}`)
       .setThumbnail(thumbnailUrl)
-      .setFooter({ text: 'Use /vote for This COOL Level!' + roleMention(process.env.VOTING_NOTIFICATION || 'voting notification') })
+      .setFooter({ text: 'Use /vote for This COOL Level!' + roleMention(process.env.VOTING_NOTIFICATION || '1404708655596568587') })
       .setColor('#00FF00')
       .setTimestamp();
 
