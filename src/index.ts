@@ -238,210 +238,245 @@ client.once('ready', async () => {
 });
 
 // single interaction handler for commands / select / modal
-client.on('interactionCreate', async (interaction: Interaction) => {
-  if (interaction.isChatInputCommand()) {
-    const ctx = interaction as ChatInputCommandInteraction;
+client.on('messageCreate', async (message: Message) => {
+  if (message.author.bot) return;
+  if (!message.guild) return;
+  if (message.guild.id !== process.env.GUILD_ID) return;
 
-    if (ctx.guildId !== process.env.GUILD_ID) {
-      await ctx.reply({ content: 'This command only works in the allowed server.', ephemeral: true });
+  // ================= !accept / !ac / !a =================
+  const acceptPrefixes = ['!accept ', '!ac ', '!a '];
+  const acceptPrefix = acceptPrefixes.find(prefix => message.content.startsWith(prefix));
+  if (acceptPrefix) {
+    const managerRoleName = process.env.MANAGER || '';
+    const managerRole = message.guild.roles.cache.find(r => r.name === managerRoleName);
+    if (!managerRole) {
+      await message.reply('Manager role not configured or not found.');
+      return;
+    }
+    if (!message.member?.roles.cache.has(managerRole.id)) {
+      await message.reply('❌ You do not have permission to use this command.');
       return;
     }
 
-    // --- verifyme ---
-    if (ctx.commandName === 'verifyme') {
-      await ctx.deferReply({ ephemeral: true });
-      const member = ctx.member as GuildMember;
-      let currentStage = -1;
-      for (let i = VERIFY_STAGES.length - 1; i >= 0; i--) {
-        if (member.roles.cache.some(r => r.name.toLowerCase() === VERIFY_STAGES[i].toLowerCase())) {
-          currentStage = i;
-          break;
+    const threadInput = message.content.slice(acceptPrefix.length).trim();
+
+    function getThreadId(input: string): { id?: string; error?: string } {
+      if (/^\d{10,}$/.test(input)) return { id: input };
+      const mention = input.match(/^<#(\d+)>$/);
+      if (mention) return { id: mention[1] };
+      const m3 = input.match(/discord\.com\/channels\/(\d+)\/(\d+)\/(\d+)/);
+      if (m3) {
+        const [, , second, third] = m3;
+        const forumId = process.env.FORUM_CHANNEL_ID || '';
+        if (forumId && second === forumId) return { id: third };
+        return { id: second };
+      }
+      if (/discord\.com\/channels\/\d+\/\d+/.test(input)) {
+        return { error: '❌ This is a channel link. Provide thread link or ID.' };
+      }
+      return { error: '❌ Invalid thread link or ID.' };
+    }
+
+    // 상위 스코프에서 threadId 선언
+    let threadId: string | undefined;
+    const { id, error } = getThreadId(threadInput);
+    if (!id) {
+      await message.reply(error || '❌ Unable to find thread ID.');
+      return;
+    }
+    threadId = id;
+
+    // Load pendings
+    const pendings = await loadPending();
+    if (pendings.find(p => p.postIdOrTag === threadId)) {
+      await message.reply('This thread is already accepted.');
+      return;
+    }
+
+    // Fetch thread
+    let levelName = '';
+    let creator = '';
+    let thumbnailUrl = 'https://via.placeholder.com/150';
+
+    try {
+      const forumChannelRaw = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
+      if (forumChannelRaw?.type === 15) {
+        const forumChannel = forumChannelRaw as any;
+        const thread = await forumChannel.threads.fetch(threadId).catch(() => null);
+        if (thread && thread.isTextBased()) {
+          levelName = thread.name;
+          creator = thread.ownerId ? `<@${thread.ownerId}>` : '';
+
+          const firstMsg = await thread.messages.fetch({ limit: 1 })
+          .then((msgs: Collection<string, Message>) => msgs.first() ?? null)
+          .catch(() => null);
+
+          if (firstMsg) {
+            const img = firstMsg.attachments.find((a: import('discord.js').Attachment) => a.contentType?.startsWith('image/'));
+            if (img) thumbnailUrl = img.url;
+            else if (firstMsg.embeds.length > 0) {
+              const e = firstMsg.embeds[0];
+              thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
+            }
+          }
         }
       }
-      const nextStage = Math.min(currentStage + 1, VERIFY_STAGES.length - 1);
-      const roleName = VERIFY_STAGES[nextStage];
-
-      let role = ctx.guild!.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
-      if (!role) {
-        role = await ctx.guild!.roles.create({ name: roleName, reason: 'Verification role' });
-      }
-      if (!member.roles.cache.has(role.id)) await member.roles.add(role);
-
-      if (roleName === 'verified') {
-        await ctx.editReply({ content: '✅ You are now verified!' });
-      } else if (roleName === 'double verified' || roleName === 'triple verified') {
-        await ctx.editReply({ content: 'You are now verified!...... more?' });
-      } else {
-        await ctx.editReply({ content: 'YOU GOT ULTIMATELY VERIFIED!' });
-      }
-      return;
+    } catch (e) {
+      console.log('Thread fetch failed:', e);
     }
 
-    // --- vote ---
-if (ctx.commandName === 'vote') {
-  const roleName = process.env.VOTE_PERM_ROLE || 'vote perm';
-  const voteRole = ctx.guild!.roles.cache.find(r => r.name === roleName);
-  const member = ctx.member as GuildMember;
+    if (!levelName) levelName = threadId;
 
-  if (!voteRole || !member.roles.cache.has(voteRole.id)) {
-    if (ctx.replied || ctx.deferred) {
-      await ctx.followUp({ content: 'You do not have permission to vote.', ephemeral: true });
+    pendings.push({
+      postIdOrTag: threadId,
+      levelName,
+      authorId: creator,
+      thumbnailUrl,
+      ranks: [],
+      votes: { song: [], design: [], vibe: [] },
+      voters: []
+    });
+
+    await savePending(pendings);
+
+    const announceChannelId = process.env.VOTE_ANNOUNCE_CHANNEL_ID || message.channel.id;
+    const announceCh = await message.guild.channels.fetch(announceChannelId).catch(() => null);
+    const threadUrl = `https://discord.com/channels/${message.guild.id}/${process.env.FORUM_CHANNEL_ID || message.guild.id}/${threadId}`;
+
+    let creatorMention = creator;
+    if (creator && !/^<@!?(\d+)>$/.test(creator)) {
+      creatorMention = `<@${creator}>`;
+    }
+
+    let creatorUserMention = creatorMention;
+    try {
+      const forumChannelRaw = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
+      if (forumChannelRaw?.type === 15) {
+        const forumChannel = forumChannelRaw as any;
+        const thread = await forumChannel.threads.fetch(threadId).catch(() => null);
+        if (thread?.ownerId) {
+          creatorUserMention = `<@${thread.ownerId}>`;
+        }
+      }
+    } catch (e) {}
+
+    const embed = new EmbedBuilder()
+      .setTitle(`'${levelName}' | has been accepted!`)
+      .setURL(threadUrl)
+      .setDescription(`by ${creatorUserMention || 'Unknown'}`)
+      .setThumbnail(thumbnailUrl)
+      .setFooter({ text: 'Use /vote for This COOL Level!' + roleMention(process.env.VOTING_NOTIFICATION || 'voting notification') })
+      .setColor('#00FF00')
+      .setTimestamp();
+
+    if (announceCh && announceCh.isTextBased()) {
+      await (announceCh as TextChannel).send({ embeds: [embed] });
     } else {
-      await ctx.reply({ content: 'You do not have permission to vote.', ephemeral: true });
+      await (message.channel as TextChannel).send({ embeds: [embed] });
     }
+
+    const emojiId = process.env.REACTION_EMOJI_ID;
+    await message.react(emojiId || '1404415892120539216').catch(() => {});
     return;
   }
 
-  const votingChannelId = process.env.VOTING_CHANNEL_ID;
-  if (votingChannelId && ctx.channelId !== votingChannelId) {
-    if (ctx.replied || ctx.deferred) {
-      await ctx.followUp({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
-    } else {
-      await ctx.reply({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
-    }
-    return;
-  }
-
-  // ★ 이 줄을 추가하세요!
-  const pendings = await loadPending();
-
-  const levelInfos = await Promise.all(
-    pendings.slice(0, 25).map(p => getLevelInfo(ctx.guild, p.postIdOrTag))
-  );
-
-  const options = pendings.slice(0, 25).map((p, i) => ({
-    label: levelInfos[i].name.length > 100 ? levelInfos[i].name.slice(0, 97) + '...' : levelInfos[i].name,
-    description: levelInfos[i].creator,
-    value: p.postIdOrTag
-  }));
-
-  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('vote_select_level')
-      .setPlaceholder('Choose a level to vote')
-      .addOptions(options)
-  );
-
-  if (ctx.replied || ctx.deferred) {
-    await ctx.followUp({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
-  } else {
-    await ctx.reply({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
-  }
-  return;
-}
-
-    // --- list ---
-    if (ctx.commandName === 'list') {
-      await ctx.deferReply({ ephemeral: true });
-      const pendings = await loadPending();
-      const scored = pendings
-        .filter(p => p.votes && p.votes.song.length > 0)
-        .map(p => {
-          const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
-          const s = avg(p.votes.song);
-          const d = avg(p.votes.design);
-          const v = avg(p.votes.vibe);
-          const overall = (s + d + v) / 3;
-          return { ...p, overall, s, d, v };
-        })
-        .sort((a, b) => b.overall - a.overall);
-
-      if (scored.length === 0) {
-        await ctx.editReply('No levels have votes yet.');
-        return;
-      }
-
-      const lines = scored.map((p, i) =>
-        `${i + 1}. ${p.levelName} (${p.postIdOrTag}) — Avg: ${p.overall.toFixed(2)} (Song:${p.s.toFixed(2)}, Design:${p.d.toFixed(2)}, Vibe:${p.v.toFixed(2)})`
-      );
-      await ctx.editReply({ content: `**Voted levels:**\n${lines.join('\n')}` });
+  // ================= !revote =================
+  if (message.content.startsWith('!revote ')) {
+    const managerRoleName = process.env.MANAGER || '';
+    const managerRole = message.guild.roles.cache.find(r => r.name === managerRoleName);
+    if (!managerRole) {
+      await message.reply('Manager role not configured or not found.');
       return;
     }
-  }
-
-  // component: select menu (vote select)
-  if (interaction.isStringSelectMenu()) {
-    const sel = interaction as StringSelectMenuInteraction;
-    if (sel.customId === 'vote_select_level') {
-      const selectedId = sel.values[0];
-      const modal = new ModalBuilder()
-        .setCustomId(`vote_modal_${selectedId}`)
-        .setTitle('Vote (1-10)');
-
-      const songInput = new TextInputBuilder()
-        .setCustomId('songScore')
-        .setLabel('Song (1-10)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. 7')
-        .setRequired(true);
-
-      const designInput = new TextInputBuilder()
-        .setCustomId('designScore')
-        .setLabel('Level Design (1-10)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. 8')
-        .setRequired(true);
-
-      const vibeInput = new TextInputBuilder()
-        .setCustomId('vibeScore')
-        .setLabel("Level's Vibe (1-10)")
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. 6')
-        .setRequired(true);
-
-      modal.addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(songInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(designInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(vibeInput)
-      );
-
-      // showModal 자동으로 interaction을 acknowledge 하지 않으므로 안전하게 호출
-      await sel.showModal(modal);
+    if (!message.member?.roles.cache.has(managerRole.id)) {
+      await message.reply('❌ You do not have permission to use this command.');
       return;
     }
-  }
 
-  // modal submit (vote)
-  if (interaction.isModalSubmit()) {
-    const modal = interaction as ModalSubmitInteraction;
-    if (!modal.customId.startsWith('vote_modal_')) return;
-
-    // don't defer reply too early — we'll reply at the end
-    const postId = modal.customId.replace('vote_modal_', '');
-    const song = parseInt(modal.fields.getTextInputValue('songScore'), 10);
-    const design = parseInt(modal.fields.getTextInputValue('designScore'), 10);
-    const vibe = parseInt(modal.fields.getTextInputValue('vibeScore'), 10);
-    const userId = modal.user.id;
-
-    if ([song, design, vibe].some(n => isNaN(n) || n < 1 || n > 10)) {
-      await modal.reply({ content: 'Scores must be numbers between 1 and 10.', ephemeral: true });
+    const postId = message.content.slice('!revote '.length).trim();
+    if (!postId) {
+      await message.reply('Usage: !revote [postId]');
       return;
     }
 
     const pendings = await loadPending();
     const lvl = pendings.find(p => p.postIdOrTag === postId);
     if (!lvl) {
-      await modal.reply({ content: 'Selected level not found.', ephemeral: true });
+      await message.reply('Level not found in pending list.');
       return;
     }
 
-    // 중복 투표 확인
-    if (lvl.voters && lvl.voters.includes(userId)) {
-      await modal.reply({ content: 'You have already voted for this level.', ephemeral: true });
-      return;
-    }
-
-    // 투표 저장
-    lvl.votes.song.push(song);
-    lvl.votes.design.push(design);
-    lvl.votes.vibe.push(vibe);
-    lvl.voters.push(userId);
+    lvl.votes = { song: [], design: [], vibe: [] };
+    lvl.voters = [];
     await savePending(pendings);
 
-    await modal.reply({ content: `Thanks — your vote for **${lvl.levelName}** has been recorded.`, ephemeral: true });
+    const votingChannelId = process.env.VOTING_CHANNEL_ID;
+    if (votingChannelId) {
+      const gch = await message.guild.channels.fetch(votingChannelId).catch(() => null);
+      if (gch?.isTextBased()) {
+        await (gch as TextChannel).send(`🔄 Voting for **${lvl.levelName}** (${lvl.postIdOrTag}) has been reset by <@${message.author.id}>. Please vote again using /vote!`);
+      }
+    }
+
+    await message.reply(`Votes for ${lvl.levelName} have been reset and voters cleared.`);
     return;
   }
+
+  // ================= !say =================
+  if (message.content.startsWith('!say')) {
+    const member = message.member;
+    if (!member) return;
+    const baseRoleName = process.env.MANAGER || '';
+    const baseRole = message.guild.roles.cache.find(r => r.name === baseRoleName);
+    if (!baseRole) return;
+    if (member.roles.highest.position < baseRole.position) {
+      await message.reply('❌ You do not have permission to use this command.');
+      return;
+    }
+
+    const raw = message.content.slice('!say'.length).trim();
+    const args = parseArgs(raw);
+    if (args.length < 2) {
+      await message.reply('❌ Usage: !say [#channel or channelID] "content" "title(optional)" "description(optional)" "imageURL(optional)" "color(optional)"');
+      return;
+    }
+
+    const channelArg = args[0];
+    const mention = channelArg.match(/^<#(\d+)>$/);
+    const channelId = mention ? mention[1] : channelArg;
+    const ch = message.guild.channels.cache.get(channelId) as TextChannel;
+    if (!ch?.isTextBased()) {
+      await message.reply('❌ Provide a valid text channel mention or ID.');
+      return;
+    }
+
+    const content = args[1];
+    const title = args[2] || '';
+    const description = args[3] || '';
+    const imageUrl = args[4] || '';
+    const colorInput = args[5] || '#5865F2';
+    const embedColor = /^#([0-9A-F]{6}|[0-9A-F]{3})$/i.test(colorInput)
+      ? parseInt(colorInput.replace('#', ''), 16)
+      : 0x5865F2;
+
+    const embed = new EmbedBuilder()
+      .setColor(embedColor)
+      .setDescription(`**${content}**`)
+      .setTimestamp();
+    if (title) embed.setTitle(`📢 ${title}`);
+    if (description) embed.setFooter({ text: description, iconURL: client.user?.displayAvatarURL() });
+    if (imageUrl) embed.setThumbnail(imageUrl);
+
+    try {
+      await ch.send({ embeds: [embed] });
+      await message.react(process.env.REACTION_EMOJI_ID || '1404415892120539216').catch(() => {});
+    } catch (e) {
+      console.error('!say send failed', e);
+      await message.reply('❌ Failed to send message.');
+    }
+  }
 });
+
 
 // ---------------- message-based commands: !accept, !revote, !say ----------------
 client.on('messageCreate', async (message: Message) => {
@@ -493,6 +528,7 @@ client.on('messageCreate', async (message: Message) => {
   return { error: '❌ 유효한 스레드 링크나 ID가 아닙니다.' };
 }
 
+const { id: threadId, error } = getThreadId(threadInput);
 
     if (!threadId) {
       await message.reply('Usage: !accept [thread link or threadID]');
