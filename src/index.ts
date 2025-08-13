@@ -474,7 +474,6 @@ client.on('messageCreate', async (message: Message) => {
     // 포스트 내용에서 name, id, creator 추출
     let thumbnailUrl = 'https://via.placeholder.com/150';
     let levelName = '';
-    let levelId = '';
     let creator = '';
     try {
       const fetched = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
@@ -482,9 +481,11 @@ client.on('messageCreate', async (message: Message) => {
         const channel = fetched as TextChannel;
         const postMsg = await channel.messages.fetch(threadId).catch(() => null);
         if (postMsg) {
+          // 제목: 첫 줄에서 name 추출
           const lines = postMsg.content.split('\n');
-          levelName = lines[0].replace(/^name\s*:\s*/i, '').trim(); // 첫 줄에서 name 추출
-          creator = postMsg.member?.displayName || postMsg.author.username;
+          levelName = lines[0].replace(/^name\s*:\s*/i, '').trim();
+          // 제작자: 포스트 메시지의 작성자 멘션
+          creator = `<@${postMsg.author.id}>`;
           // 썸네일 추출
           const img = postMsg.attachments.find(a => a.contentType?.startsWith('image/'));
           if (img) thumbnailUrl = img.url;
