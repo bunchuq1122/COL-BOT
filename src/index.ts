@@ -94,7 +94,8 @@ async function getLevelInfo(guild: any, postIdOrTag: string): Promise<{ name: st
     const content = postMsg.content;
     const nameMatch = content.match(/^\s*name\s*:\s*([^\r\n]+)/im);
     const name = nameMatch ? nameMatch[1].trim() : postIdOrTag;
-    const creator = `<@${postMsg.author.id}>`;
+    // 개발자 이름(닉네임)
+    const creator = postMsg.member?.displayName || postMsg.author.username;
     return { name, creator };
   } catch {
     return { name: postIdOrTag, creator: '' };
@@ -484,11 +485,10 @@ client.on('messageCreate', async (message: Message) => {
         const postMsg = await channel.messages.fetch(threadId).catch(() => null);
         if (postMsg) {
   const content = postMsg.content;
-  // name 추출 (줄 앞 공백 포함, 영어/한글 모두 대응)
   const nameMatch = content.match(/^\s*name\s*:\s*([^\r\n]+)/im);
   levelName = nameMatch ? nameMatch[1].trim() : '';
-  // 제작자: 포스트 메시지의 작성자 멘션
-  creator = `<@${postMsg.author.id}>`;
+  // 제작자: 포스트 메시지의 작성자 이름(닉네임)
+  creator = postMsg.member?.displayName || postMsg.author.username;
   // 썸네일 추출
   const img = postMsg.attachments.find(a => a.contentType?.startsWith('image/'));
   if (img) thumbnailUrl = img.url;
@@ -496,7 +496,6 @@ client.on('messageCreate', async (message: Message) => {
     const e = postMsg.embeds[0];
     thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
   }
-  // 디버깅용 로그
   if (!nameMatch) console.log('name not found in post:', content);
 }
       }
