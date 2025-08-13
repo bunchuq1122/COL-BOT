@@ -85,6 +85,22 @@ type PendingLevel = {
   voters: string[];
 };
 
+async function getLevelInfo(guild: any, postIdOrTag: string): Promise<{ name: string, creator: string }> {
+  try {
+    const channel = await guild.channels.fetch(process.env.FORUM_CHANNEL_ID || '') as TextChannel;
+    if (!channel) return { name: postIdOrTag, creator: '' };
+    const postMsg = await channel.messages.fetch(postIdOrTag).catch(() => null);
+    if (!postMsg) return { name: postIdOrTag, creator: '' };
+    const content = postMsg.content;
+    const nameMatch = content.match(/^\s*name\s*:\s*([^\r\n]+)/im);
+    const name = nameMatch ? nameMatch[1].trim() : postIdOrTag;
+    const creator = `<@${postMsg.author.id}>`;
+    return { name, creator };
+  } catch {
+    return { name: postIdOrTag, creator: '' };
+  }
+}
+
 // ---------------- helper: load/save pending ----------------
 async function loadPending(): Promise<PendingLevel[]> {
   if (docs && googleDocId) {
@@ -257,60 +273,57 @@ client.on('interactionCreate', async (interaction: Interaction) => {
     }
 
     // --- vote ---
-    if (ctx.commandName === 'vote') {
-      const roleName = process.env.VOTE_PERM_ROLE || 'vote perm';
-      const voteRole = ctx.guild!.roles.cache.find(r => r.name === roleName);
-      const member = ctx.member as GuildMember;
+if (ctx.commandName === 'vote') {
+  const roleName = process.env.VOTE_PERM_ROLE || 'vote perm';
+  const voteRole = ctx.guild!.roles.cache.find(r => r.name === roleName);
+  const member = ctx.member as GuildMember;
 
-      if (!voteRole || !member.roles.cache.has(voteRole.id)) {
-        if (ctx.replied || ctx.deferred) {
-          await ctx.followUp({ content: 'You do not have permission to vote.', ephemeral: true });
-        } else {
-          await ctx.reply({ content: 'You do not have permission to vote.', ephemeral: true });
-        }
-        return;
-      }
-
-      const votingChannelId = process.env.VOTING_CHANNEL_ID;
-      if (votingChannelId && ctx.channelId !== votingChannelId) {
-        if (ctx.replied || ctx.deferred) {
-          await ctx.followUp({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
-        } else {
-          await ctx.reply({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
-        }
-        return;
-      }
-
-      const pendings = await loadPending();
-      if (pendings.length === 0) {
-        if (ctx.replied || ctx.deferred) {
-          await ctx.followUp({ content: 'No pending levels to vote.', ephemeral: true });
-        } else {
-          await ctx.reply({ content: 'No pending levels to vote.', ephemeral: true });
-        }
-        return;
-      }
-
-      const options = pendings.slice(0, 25).map(p => ({
-        label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
-        description: p.postIdOrTag,
-        value: p.postIdOrTag
-      }));
-
-      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId('vote_select_level')
-          .setPlaceholder('Choose a level to vote')
-          .addOptions(options)
-      );
-
-      if (ctx.replied || ctx.deferred) {
-        await ctx.followUp({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
-      } else {
-        await ctx.reply({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
-      }
-      return;
+  if (!voteRole || !member.roles.cache.has(voteRole.id)) {
+    if (ctx.replied || ctx.deferred) {
+      await ctx.followUp({ content: 'You do not have permission to vote.', ephemeral: true });
+    } else {
+      await ctx.reply({ content: 'You do not have permission to vote.', ephemeral: true });
     }
+    return;
+  }
+
+  const votingChannelId = process.env.VOTING_CHANNEL_ID;
+  if (votingChannelId && ctx.channelId !== votingChannelId) {
+    if (ctx.replied || ctx.deferred) {
+      await ctx.followUp({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
+    } else {
+      await ctx.reply({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
+    }
+    return;
+  }
+
+  // ★ 이 줄을 추가하세요!
+  const pendings = await loadPending();
+
+  const levelInfos = await Promise.all(
+    pendings.slice(0, 25).map(p => getLevelInfo(ctx.guild, p.postIdOrTag))
+  );
+
+  const options = pendings.slice(0, 25).map((p, i) => ({
+    label: levelInfos[i].name.length > 100 ? levelInfos[i].name.slice(0, 97) + '...' : levelInfos[i].name,
+    description: levelInfos[i].creator,
+    value: p.postIdOrTag
+  }));
+
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('vote_select_level')
+      .setPlaceholder('Choose a level to vote')
+      .addOptions(options)
+  );
+
+  if (ctx.replied || ctx.deferred) {
+    await ctx.followUp({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
+  } else {
+    await ctx.reply({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
+  }
+  return;
+}
 
     // --- list ---
     if (ctx.commandName === 'list') {
@@ -854,10 +867,15 @@ client.on('messageCreate', async (message: Message) => {
     return;
   }
 
-  // 선택 메뉴 생성
-  const options = pendings.slice(0, 25).map(p => ({
-    label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
-    description: p.postIdOrTag,
+  // 레벨 정보 동시 추출
+  const levelInfos = await Promise.all(
+    pendings.slice(0, 25).map(p => getLevelInfo(message.guild, p.postIdOrTag))
+  );
+
+  // 선택 메뉴 생성 (제목: 레벨명, 설명: 개발자)
+  const options = pendings.slice(0, 25).map((p, i) => ({
+    label: levelInfos[i].name.length > 100 ? levelInfos[i].name.slice(0, 97) + '...' : levelInfos[i].name,
+    description: levelInfos[i].creator,
     value: p.postIdOrTag
   }));
 
@@ -868,7 +886,6 @@ client.on('messageCreate', async (message: Message) => {
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
 
-  // 일반 메시지 reply에는 ephemeral 사용 불가
   await message.reply({ content: 'Select a level to remove:', components: [row] });
 });
 
