@@ -428,7 +428,9 @@ client.on('messageCreate', async (message: Message) => {
   if (message.guild.id !== process.env.GUILD_ID) return;
 
   // ----- !accept [threadID] (매니저 전용) -----
-  if (message.content.startsWith('!accept ')) {
+  const acceptPrefixes = ['!accept ', '!ac ', '!a '];
+  const acceptPrefix = acceptPrefixes.find(prefix => message.content.startsWith(prefix));
+  if (acceptPrefix) {
     const managerRoleName = process.env.MANAGER || '';
     const managerRole = message.guild.roles.cache.find(r => r.name === managerRoleName);
     if (!managerRole) {
@@ -440,7 +442,7 @@ client.on('messageCreate', async (message: Message) => {
       return;
     }
 
-    const threadId = message.content.slice('!accept '.length).trim();
+    const threadId = message.content.slice(acceptPrefix.length).trim();
     if (!threadId) {
       await message.reply('Usage: !accept [threadID]');
       return;
@@ -453,33 +455,44 @@ client.on('messageCreate', async (message: Message) => {
       return;
     }
 
-    // try fetch thread for thumbnail & title
+    // 포스트 내용에서 name, id, creator 추출
     let thumbnailUrl = 'https://via.placeholder.com/150';
     let levelName = threadId;
+    let levelId = '';
+    let creator = '';
     try {
-      const fetched = await client.channels.fetch(threadId);
-      if (fetched && fetched.isThread()) {
-        const thread = fetched;
-        levelName = thread.name ?? threadId;
-        const starter = await (thread as any).fetchStarterMessage().catch(() => null);
-        if (starter) {
-          const img = starter.attachments.find((a: any) => a.contentType?.startsWith('image/'));
+      const fetched = await client.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
+      if (fetched && fetched.isTextBased && fetched.isTextBased()) {
+        const channel = fetched as TextChannel;
+        const postMsg = await channel.messages.fetch(threadId).catch(() => null);
+        if (postMsg) {
+          const content = postMsg.content;
+          // 정규식 추출
+          const nameMatch = content.match(/name\s*:\s*(.+)/i);
+          const idMatch = content.match(/id\s*:\s*(.+)/i);
+          const creatorMatch = content.match(/creator\s*:\s*(.+)/i);
+          levelName = nameMatch ? nameMatch[1].trim() : threadId;
+          levelId = idMatch ? idMatch[1].trim() : '';
+          creator = creatorMatch ? creatorMatch[1].trim() : message.author.id;
+
+          // 썸네일 추출
+          const img = postMsg.attachments.find(a => a.contentType?.startsWith('image/'));
           if (img) thumbnailUrl = img.url;
-          else if (starter.embeds.length > 0) {
-            const e = starter.embeds[0];
+          else if (postMsg.embeds.length > 0) {
+            const e = postMsg.embeds[0];
             thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
           }
         }
       }
     } catch (e) {
-      console.log('fetch thread failed or not thread:', e);
+      console.log('fetch post failed:', e);
     }
 
     // push pending (with voters 초기화)
     pendings.push({
       postIdOrTag: threadId,
-      levelName,
-      authorId: message.author.id,
+      levelName: levelName,
+      authorId: creator,
       thumbnailUrl,
       ranks: [],
       votes: { song: [], design: [], vibe: [] },
@@ -497,7 +510,7 @@ client.on('messageCreate', async (message: Message) => {
     const embed = new EmbedBuilder()
       .setTitle(`'${levelName}' | has been accepted!`)
       .setURL(threadUrl)
-      .setDescription(`by <@${message.author.id}>`)
+      .setDescription(`by ${creator}`)
       .setThumbnail(thumbnailUrl)
       .setFooter({ text: 'Use /vote for This COOL Level!' + roleMention(process.env.VOTING_NOTIFICATION || 'voting notification') })
       .setColor('#00FF00')
@@ -736,10 +749,41 @@ client.on('messageCreate', async (message: Message) => {
     return;
   }
 
-  // 포맷팅
-  const lines: string[] = scored.map((p, i) =>
-    `${i + 1}. ${p.levelName} by <@${p.authorId}> | ${p.postIdOrTag}\n   Song: ${p.s.toFixed(2)}, Design: ${p.d.toFixed(2)}, Vibe: ${p.v.toFixed(2)}, Overall: ${p.overall.toFixed(2)}`
+  // 각 pending의 메시지에서 name, id, creator 추출
+  async function extractInfoFromPost(postIdOrTag: string): Promise<{ name: string, id: string, creator: string }> {
+    try {
+      // 스레드 메시지 fetch
+      const channel = await message.guild?.channels.fetch(process.env.FORUM_CHANNEL_ID || '') as TextChannel;
+      if (!channel) return { name: '', id: '', creator: '' };
+      const postMsg = await channel.messages.fetch(postIdOrTag).catch(() => null);
+      if (!postMsg) return { name: '', id: '', creator: '' };
+      const content = postMsg.content;
+
+      // 정규식 추출
+      const nameMatch = content.match(/name\s*:\s*(.+)/i);
+      const idMatch = content.match(/id\s*:\s*(.+)/i);
+      const creatorMatch = content.match(/creator\s*:\s*(.+)/i);
+
+      return {
+        name: nameMatch ? nameMatch[1].trim() : '',
+        id: idMatch ? idMatch[1].trim() : '',
+        creator: creatorMatch ? creatorMatch[1].trim() : ''
+      };
+    } catch {
+      return { name: '', id: '', creator: '' };
+    }
+  }
+
+  // 모든 레벨 정보 추출
+  const levelInfos = await Promise.all(
+    scored.map(lvl => extractInfoFromPost(lvl.postIdOrTag))
   );
+
+  // 포맷팅
+  const lines: string[] = scored.map((p, i) => {
+    const info = levelInfos[i];
+    return `${i + 1}. ${info.name || p.levelName} by ${info.creator || `<@${p.authorId}>`} | ${info.id || p.postIdOrTag}\n   Song: ${p.s.toFixed(2)}, Design: ${p.d.toFixed(2)}, Vibe: ${p.v.toFixed(2)}, Overall: ${p.overall.toFixed(2)}`;
+  });
   const docText = lines.join('\n\n');
 
   // 기존 내용 삭제 후 새로 입력
@@ -749,7 +793,7 @@ client.on('messageCreate', async (message: Message) => {
     const endIndex = content ? content[content.length - 1].endIndex || 1 : 1;
 
     const requests: docs_v1.Schema$Request[] = [];
-    if (endIndex > 1) {
+    if (endIndex > 2) {
       requests.push({
         deleteContentRange: {
           range: { startIndex: 1, endIndex: endIndex - 1 },
