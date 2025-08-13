@@ -86,6 +86,8 @@ type PendingLevel = {
   voters: string[];
 };
 
+
+
 async function getLevelInfo(guild: any, postIdOrTag: string): Promise<{ name: string, creator: string }> {
   try {
     const forumChannelRaw = await guild.channels.fetch(process.env.FORUM_CHANNEL_ID || '');
@@ -464,9 +466,33 @@ client.on('messageCreate', async (message: Message) => {
 
     const threadInput = message.content.slice(acceptPrefix.length).trim();
     // 링크에서 threadId 추출
-    let threadId = threadInput;
-    const urlMatch = threadInput.match(/discord\.com\/channels\/\d+\/\d+\/(\d+)/);
-    if (urlMatch) threadId = urlMatch[1];
+    function getThreadId(input: string): { id?: string; error?: string } {
+  // 숫자만
+  if (/^\d{10,}$/.test(input)) return { id: input };
+
+  // 스레드 멘션
+  const mention = input.match(/^<#(\d+)>$/);
+  if (mention) return { id: mention[1] };
+
+  // 포럼 스레드 URL (guild/channel/thread)
+  const m3 = input.match(/discord\.com\/channels\/(\d+)\/(\d+)\/(\d+)/);
+  if (m3) {
+    const [, , second, third] = m3;
+    const forumId = process.env.FORUM_CHANNEL_ID || '';
+    // /guildId/forumId/threadId
+    if (forumId && second === forumId) return { id: third };
+    // /guildId/threadId/messageId
+    return { id: second };
+  }
+
+  // 채널 링크 (guild/channel) → 에러
+  if (/discord\.com\/channels\/\d+\/\d+/.test(input)) {
+    return { error: '❌ 이건 채널 링크입니다. 스레드 링크나 스레드 ID를 입력하세요.' };
+  }
+
+  return { error: '❌ 유효한 스레드 링크나 ID가 아닙니다.' };
+}
+
 
     if (!threadId) {
       await message.reply('Usage: !accept [thread link or threadID]');
