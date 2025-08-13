@@ -91,10 +91,8 @@ async function getLevelInfo(guild: any, postIdOrTag: string): Promise<{ name: st
     if (!channel) return { name: postIdOrTag, creator: '' };
     const postMsg = await channel.messages.fetch(postIdOrTag).catch(() => null);
     if (!postMsg) return { name: postIdOrTag, creator: '' };
-    const content = postMsg.content;
-    const nameMatch = content.match(/^\s*name\s*:\s*([^\r\n]+)/im);
-    const name = nameMatch ? nameMatch[1].trim() : postIdOrTag;
-    // 개발자 이름(닉네임)
+    const lines = postMsg.content.split('\n');
+    const name = lines[0].replace(/^name\s*:\s*/i, '').trim();
     const creator = postMsg.member?.displayName || postMsg.author.username;
     return { name, creator };
   } catch {
@@ -484,20 +482,17 @@ client.on('messageCreate', async (message: Message) => {
         const channel = fetched as TextChannel;
         const postMsg = await channel.messages.fetch(threadId).catch(() => null);
         if (postMsg) {
-  const content = postMsg.content;
-  const nameMatch = content.match(/^\s*name\s*:\s*([^\r\n]+)/im);
-  levelName = nameMatch ? nameMatch[1].trim() : '';
-  // 제작자: 포스트 메시지의 작성자 이름(닉네임)
-  creator = postMsg.member?.displayName || postMsg.author.username;
-  // 썸네일 추출
-  const img = postMsg.attachments.find(a => a.contentType?.startsWith('image/'));
-  if (img) thumbnailUrl = img.url;
-  else if (postMsg.embeds.length > 0) {
-    const e = postMsg.embeds[0];
-    thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
-  }
-  if (!nameMatch) console.log('name not found in post:', content);
-}
+          const lines = postMsg.content.split('\n');
+          levelName = lines[0].replace(/^name\s*:\s*/i, '').trim(); // 첫 줄에서 name 추출
+          creator = postMsg.member?.displayName || postMsg.author.username;
+          // 썸네일 추출
+          const img = postMsg.attachments.find(a => a.contentType?.startsWith('image/'));
+          if (img) thumbnailUrl = img.url;
+          else if (postMsg.embeds.length > 0) {
+            const e = postMsg.embeds[0];
+            thumbnailUrl = e.thumbnail?.url ?? e.image?.url ?? thumbnailUrl;
+          }
+        }
       }
     } catch (e) {
       console.log('fetch post failed:', e);
