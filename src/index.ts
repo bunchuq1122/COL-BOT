@@ -223,31 +223,56 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 
     // --- verifyme ---
     if (ctx.commandName === 'verifyme') {
-      await ctx.deferReply({ ephemeral: true });
-      const member = ctx.member as GuildMember;
-      let currentStage = -1;
-      for (let i = VERIFY_STAGES.length - 1; i >= 0; i--) {
-        if (member.roles.cache.some(r => r.name.toLowerCase() === VERIFY_STAGES[i].toLowerCase())) {
-          currentStage = i;
-          break;
+      try {
+        if (!ctx.guild || !ctx.member) {
+          await ctx.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+          return;
+        }
+
+        await ctx.deferReply({ ephemeral: true });
+
+        const member = ctx.member as GuildMember;
+        let currentStage = -1;
+
+        for (let i = VERIFY_STAGES.length - 1; i >= 0; i--) {
+          if (member.roles.cache.some(r => r.name.toLowerCase() === VERIFY_STAGES[i].toLowerCase())) {
+            currentStage = i;
+            break;
+          }
+        }
+
+        const nextStage = Math.min(currentStage + 1, VERIFY_STAGES.length - 1);
+        const roleName = VERIFY_STAGES[nextStage];
+
+        let role = ctx.guild.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
+        if (!role) {
+          role = await ctx.guild.roles.create({ name: roleName, reason: 'Verification role' });
+        }
+
+        if (!member.roles.cache.has(role.id)) {
+          await member.roles.add(role);
+        }
+
+        let replyMsg = '';
+        if (roleName === 'verified') {
+          replyMsg = '✅ You are now verified!';
+        } else if (roleName === 'double verified' || roleName === 'triple verified') {
+          replyMsg = 'You are now verified!...... more?';
+        } else {
+          replyMsg = 'YOU GOT ULTIMATELY VERIFIED!';
+        }
+
+        await ctx.editReply({ content: replyMsg });
+
+      } catch (err) {
+        console.error('verifyme command error:', err);
+        if (ctx.deferred || ctx.replied) {
+          await ctx.editReply({ content: '❌ Something went wrong. Please contact an admin.' });
+        } else {
+          await ctx.reply({ content: '❌ Something went wrong. Please contact an admin.', ephemeral: true });
         }
       }
-      const nextStage = Math.min(currentStage + 1, VERIFY_STAGES.length - 1);
-      const roleName = VERIFY_STAGES[nextStage];
 
-      let role = ctx.guild!.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
-      if (!role) {
-        role = await ctx.guild!.roles.create({ name: roleName, reason: 'Verification role' });
-      }
-      if (!member.roles.cache.has(role.id)) await member.roles.add(role);
-
-      if (roleName === 'verified') {
-        await ctx.editReply({ content: '✅ You are now verified!' });
-      } else if (roleName === 'double verified' || roleName === 'triple verified') {
-        await ctx.editReply({ content: 'You are now verified!...... more?' });
-      } else {
-        await ctx.editReply({ content: 'YOU GOT ULTIMATELY VERIFIED!' });
-      }
       return;
     }
 
