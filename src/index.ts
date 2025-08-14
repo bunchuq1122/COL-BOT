@@ -213,237 +213,125 @@ client.once('ready', async () => {
 
 // single interaction handler for commands / select / modal
 client.on('interactionCreate', async (interaction: Interaction) => {
-  if (interaction.isChatInputCommand()) {
-    const ctx = interaction as ChatInputCommandInteraction;
+  if (!interaction.isChatInputCommand()) return;
 
-    if (ctx.guildId !== process.env.GUILD_ID) {
-      await ctx.reply({ content: 'This command only works in the allowed server.', ephemeral: true });
-      return;
-    }
+  const ctx = interaction;
+  const { commandName, guild, member } = ctx;
 
-    // --- verifyme ---
-    if (ctx.commandName === 'verifyme') {
-      try {
-        if (!ctx.guild || !ctx.member) {
-          await ctx.reply({ content: 'This command can only be used in a server.', ephemeral: true });
-          return;
-        }
-
-        await ctx.deferReply({ ephemeral: true });
-
-        const member = ctx.member as GuildMember;
-        let currentStage = -1;
-
-        for (let i = VERIFY_STAGES.length - 1; i >= 0; i--) {
-          if (member.roles.cache.some(r => r.name.toLowerCase() === VERIFY_STAGES[i].toLowerCase())) {
-            currentStage = i;
-            break;
-          }
-        }
-
-        const nextStage = Math.min(currentStage + 1, VERIFY_STAGES.length - 1);
-        const roleName = VERIFY_STAGES[nextStage];
-
-        let role = ctx.guild.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
-        if (!role) {
-          role = await ctx.guild.roles.create({ name: roleName, reason: 'Verification role' });
-        }
-
-        if (!member.roles.cache.has(role.id)) {
-          await member.roles.add(role);
-        }
-
-        let replyMsg = '';
-        if (roleName === 'verified') {
-          replyMsg = '✅ You are now verified!';
-        } else if (roleName === 'double verified' || roleName === 'triple verified') {
-          replyMsg = 'You are now verified!...... more?';
-        } else {
-          replyMsg = 'YOU GOT ULTIMATELY VERIFIED!';
-        }
-
-        await ctx.editReply({ content: replyMsg });
-
-      } catch (err) {
-        console.error('verifyme command error:', err);
-        if (ctx.deferred || ctx.replied) {
-          await ctx.editReply({ content: '❌ Something went wrong. Please contact an admin.' });
-        } else {
-          await ctx.reply({ content: '❌ Something went wrong. Please contact an admin.', ephemeral: true });
-        }
-      }
-
-      return;
-    }
-
-    // --- vote ---
-    if (ctx.commandName === 'vote') {
-      const roleName = process.env.VOTE_PERM_ROLE || 'vote perm';
-      const voteRole = ctx.guild!.roles.cache.find(r => r.name === roleName);
-      const member = ctx.member as GuildMember;
-
-      if (!voteRole || !member.roles.cache.has(voteRole.id)) {
-        if (ctx.replied || ctx.deferred) {
-          await ctx.followUp({ content: 'You do not have permission to vote.', ephemeral: true });
-        } else {
-          await ctx.reply({ content: 'You do not have permission to vote.', ephemeral: true });
-        }
-        return;
-      }
-
-      const votingChannelId = process.env.VOTING_CHANNEL_ID;
-      if (votingChannelId && ctx.channelId !== votingChannelId) {
-        if (ctx.replied || ctx.deferred) {
-          await ctx.followUp({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
-        } else {
-          await ctx.reply({ content: `You can only vote in <#${votingChannelId}>`, ephemeral: true });
-        }
-        return;
-      }
-
-      const pendings = await loadPending();
-      if (pendings.length === 0) {
-        if (ctx.replied || ctx.deferred) {
-          await ctx.followUp({ content: 'No pending levels to vote.', ephemeral: true });
-        } else {
-          await ctx.reply({ content: 'No pending levels to vote.', ephemeral: true });
-        }
-        return;
-      }
-
-      const options = pendings.slice(0, 25).map(p => ({
-        label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
-        description: p.postIdOrTag,
-        value: p.postIdOrTag
-      }));
-
-      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId('vote_select_level')
-          .setPlaceholder('Choose a level to vote')
-          .addOptions(options)
-      );
-
-      if (ctx.replied || ctx.deferred) {
-        await ctx.followUp({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
-      } else {
-        await ctx.reply({ content: 'Select a level to vote for:', components: [row], ephemeral: true });
-      }
-      return;
-    }
-
-    // --- list ---
-    if (ctx.commandName === 'list') {
-      await ctx.deferReply({ ephemeral: true });
-      const pendings = await loadPending();
-      const scored = pendings
-        .filter(p => p.votes && p.votes.song.length > 0)
-        .map(p => {
-          const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
-          const s = avg(p.votes.song);
-          const d = avg(p.votes.design);
-          const v = avg(p.votes.vibe);
-          const overall = (s + d + v) / 3;
-          return { ...p, overall, s, d, v };
-        })
-        .sort((a, b) => b.overall - a.overall);
-
-      if (scored.length === 0) {
-        await ctx.editReply('No levels have votes yet.');
-        return;
-      }
-
-      const lines = scored.map((p, i) =>
-        `${i + 1}. ${p.levelName} (${p.postIdOrTag}) — Avg: ${p.overall.toFixed(2)} (Song:${p.s.toFixed(2)}, Design:${p.d.toFixed(2)}, Vibe:${p.v.toFixed(2)})`
-      );
-      await ctx.editReply({ content: `**Voted levels:**\n${lines.join('\n')}` });
-      return;
-    }
+  if (!guild || !member || !(member instanceof GuildMember)) {
+    await ctx.reply({ content: 'Guild or member not found', ephemeral: true });
+    return;
   }
 
-  // component: select menu (vote select)
-  if (interaction.isStringSelectMenu()) {
-    const sel = interaction as StringSelectMenuInteraction;
-    if (sel.customId === 'vote_select_level') {
-      const selectedId = sel.values[0];
-      const modal = new ModalBuilder()
-        .setCustomId(`vote_modal_${selectedId}`)
-        .setTitle('Vote (1-10)');
+  const guildMember = member as GuildMember;
 
-      const songInput = new TextInputBuilder()
-        .setCustomId('songScore')
-        .setLabel('Song (1-10)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. 7')
-        .setRequired(true);
+  // ------------------ /verifyme ------------------
+  if (commandName === 'verifyme') {
+    await ctx.deferReply({ ephemeral: true });
 
-      const designInput = new TextInputBuilder()
-        .setCustomId('designScore')
-        .setLabel('Level Design (1-10)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. 8')
-        .setRequired(true);
-
-      const vibeInput = new TextInputBuilder()
-        .setCustomId('vibeScore')
-        .setLabel("Level's Vibe (1-10)")
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. 6')
-        .setRequired(true);
-
-      modal.addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(songInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(designInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(vibeInput)
-      );
-
-      // showModal 자동으로 interaction을 acknowledge 하지 않으므로 안전하게 호출
-      await sel.showModal(modal);
-      return;
+    let currentStage = -1;
+    for (let i = VERIFY_STAGES.length - 1; i >= 0; i--) {
+      if (guildMember.roles.cache.some(r => r.name.toLowerCase() === VERIFY_STAGES[i].toLowerCase())) {
+        currentStage = i;
+        break;
+      }
     }
+
+    const nextStage = Math.min(currentStage + 1, VERIFY_STAGES.length - 1);
+    const roleName = VERIFY_STAGES[nextStage];
+
+    let role = guild.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
+    if (!role) {
+      role = await guild.roles.create({ name: roleName, reason: 'Verification role' });
+    }
+
+    if (!guildMember.roles.cache.has(role.id)) {
+      await guildMember.roles.add(role);
+    }
+
+    if (roleName === 'verified') {
+      await ctx.editReply({ content: '✅ You are now verified!' });
+    } else if (roleName === 'double verified' || roleName === 'triple verified') {
+      await ctx.editReply({ content: 'You are now verified!...... more?' });
+    } else {
+      await ctx.editReply({ content: 'YOU GOT ULTIMATELY VERIFIED!' });
+    }
+    return;
   }
 
-  // modal submit (vote)
-  if (interaction.isModalSubmit()) {
-    const modal = interaction as ModalSubmitInteraction;
-    if (!modal.customId.startsWith('vote_modal_')) return;
+  // ------------------ /vote ------------------
+  if (commandName === 'vote') {
+    await ctx.deferReply({ ephemeral: true });
 
-    // don't defer reply too early — we'll reply at the end
-    const postId = modal.customId.replace('vote_modal_', '');
-    const song = parseInt(modal.fields.getTextInputValue('songScore'), 10);
-    const design = parseInt(modal.fields.getTextInputValue('designScore'), 10);
-    const vibe = parseInt(modal.fields.getTextInputValue('vibeScore'), 10);
-    const userId = modal.user.id;
+    const roleId = process.env.VOTE_PERM_ROLE!;
+    const voteRole = guild.roles.cache.get(roleId);
 
-    if ([song, design, vibe].some(n => isNaN(n) || n < 1 || n > 10)) {
-      await modal.reply({ content: 'Scores must be numbers between 1 and 10.', ephemeral: true });
+    if (!voteRole || !guildMember.roles.cache.has(voteRole.id)) {
+      await ctx.editReply({ content: 'You do not have permission to vote.' });
+      return;
+    }
+
+    const votingChannelId = process.env.VOTING_CHANNEL_ID!;
+    if (ctx.channelId !== votingChannelId) {
+      await ctx.editReply({ content: `You can only vote in <#${votingChannelId}>.` });
       return;
     }
 
     const pendings = await loadPending();
-    const lvl = pendings.find(p => p.postIdOrTag === postId);
-    if (!lvl) {
-      await modal.reply({ content: 'Selected level not found.', ephemeral: true });
+    if (pendings.length === 0) {
+      await ctx.editReply({ content: 'No pending levels to vote.' });
       return;
     }
 
-    // 중복 투표 확인
-    if (lvl.voters && lvl.voters.includes(userId)) {
-      await modal.reply({ content: 'You have already voted for this level.', ephemeral: true });
+    const options = pendings.slice(0, 25).map(p => ({
+      label: p.levelName.length > 100 ? p.levelName.slice(0, 97) + '...' : p.levelName,
+      description: p.postIdOrTag,
+      value: p.postIdOrTag,
+    }));
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('vote_select_level')
+        .setPlaceholder('Choose a level to vote')
+        .addOptions(options)
+    );
+
+    await ctx.editReply({ content: 'Select a level to vote for:', components: [row] });
+    return;
+  }
+
+  // ------------------ /list ------------------
+  if (commandName === 'list') {
+    const pendings = await loadPending();
+    if (pendings.length === 0) {
+      await ctx.reply({ content: 'No voted levels yet.', ephemeral: true });
       return;
     }
 
-    // 투표 저장
-    lvl.votes.song.push(song);
-    lvl.votes.design.push(design);
-    lvl.votes.vibe.push(vibe);
-    lvl.voters.push(userId);
-    await savePending(pendings);
+    const sorted = pendings
+      .filter(p => p.votes && p.votes.design)
+      .sort((a, b) => {
+        const avgA =
+          a.votes.design.reduce((sum, x) => sum + x, 0) / (a.votes.design.length || 1);
+        const avgB =
+          b.votes.design.reduce((sum, x) => sum + x, 0) / (b.votes.design.length || 1);
+        return avgB - avgA;
+      });
 
-    await modal.reply({ content: `Thanks — your vote for **${lvl.levelName}** has been recorded.`, ephemeral: true });
+    const listText = sorted
+      .map(
+        (p, i) =>
+          `#${i + 1} - ${p.levelName} | Avg Design Score: ${
+            (p.votes.design.reduce((sum, x) => sum + x, 0) / (p.votes.design.length || 1)).toFixed(2)
+          }`
+      )
+      .join('\n');
+
+    await ctx.reply({ content: '🏆 Voted Levels:\n' + listText, ephemeral: true });
     return;
   }
 });
+
 
 // ---------------- message-based commands: !accept, !revote, !say ----------------
 client.on('messageCreate', async (message: Message) => {
