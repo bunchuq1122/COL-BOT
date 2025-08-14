@@ -579,4 +579,6 @@ http.createServer((req, res) => {
 }).listen(port, () => console.log('Server running on port', port));
 
 // ---------------- login ----------------
-client.login(process.env.TOKEN);
+client.login(process.env.TOKEN)
+  .then(() => console.log('Login attempt sent'))
+  .catch(console.error);
