@@ -426,6 +426,8 @@ client.on('messageCreate', async (message: Message) => {
   if (!message.guild) return;
   if (message.guild.id !== process.env.GUILD_ID) return;
 
+  const member = message.member;
+
   // ----- !accept [threadID] (매니저 전용) -----
   if (message.content.startsWith('!accept ')) {
     const managerRoleName = process.env.MANAGER || '';
@@ -434,7 +436,7 @@ client.on('messageCreate', async (message: Message) => {
       await message.reply('Manager role not configured or not found.');
       return;
     }
-    if (!message.member?.roles.cache.has(managerRole.id)) {
+    if (!member?.roles.cache.has(managerRole.id)) {
       await message.reply('❌ You do not have permission to use this command.');
       return;
     }
@@ -445,14 +447,13 @@ client.on('messageCreate', async (message: Message) => {
       return;
     }
 
-    // load existing pendings
     const pendings = await loadPending();
     if (pendings.find(p => p.postIdOrTag === threadId)) {
       await message.reply('This thread is already accepted.');
       return;
     }
 
-    // try fetch thread for thumbnail & title
+    // fetch thread for thumbnail & title
     let thumbnailUrl = 'https://via.placeholder.com/150';
     let levelName = threadId;
     try {
@@ -474,7 +475,6 @@ client.on('messageCreate', async (message: Message) => {
       console.log('fetch thread failed or not thread:', e);
     }
 
-    // push pending (with voters 초기화)
     pendings.push({
       postIdOrTag: threadId,
       levelName,
@@ -488,7 +488,7 @@ client.on('messageCreate', async (message: Message) => {
     await savePending(pendings);
     console.log('Pending levels saved:', pendings.length);
 
-    // announcement: 특정 채널로 보내기 (환경변수 VOTE_ANNOUNCE_CHANNEL_ID 사용)
+    // announcement
     const announceChannelId = process.env.VOTE_ANNOUNCE_CHANNEL_ID || message.channel.id;
     const announceCh = await message.guild.channels.fetch(announceChannelId).catch(() => null);
     const threadUrl = `https://discord.com/channels/${message.guild.id}/${process.env.FORUM_CHANNEL_ID || message.guild.id}/${threadId}`;
@@ -525,7 +525,7 @@ client.on('messageCreate', async (message: Message) => {
       await message.reply('Manager role not configured or not found.');
       return;
     }
-    if (!message.member?.roles.cache.has(managerRole.id)) {
+    if (!member?.roles.cache.has(managerRole.id)) {
       await message.reply('❌ You do not have permission to use this command.');
       return;
     }
@@ -543,12 +543,10 @@ client.on('messageCreate', async (message: Message) => {
       return;
     }
 
-    // 초기화: votes와 voters 비우기
     lvl.votes = { song: [], design: [], vibe: [] };
     lvl.voters = [];
     await savePending(pendings);
 
-    // 공지: 투표 채널에 다시 투표하라고 알림
     const votingChannelId = process.env.VOTING_CHANNEL_ID;
     if (votingChannelId) {
       const gch = await message.guild.channels.fetch(votingChannelId).catch(() => null);
@@ -560,129 +558,101 @@ client.on('messageCreate', async (message: Message) => {
     await message.reply(`Votes for ${lvl.levelName} have been reset and voters cleared.`);
     return;
   }
-});
 
-// ---------------- message-based !say command ----------------
-client.on('messageCreate', async (message: Message) => {
-  if (message.author.bot) return;
-  if (!message.guild) return;
-  if (message.guild.id !== process.env.GUILD_ID) return;
-
-  const PREFIX = '!say';
-  if (!message.content.startsWith(PREFIX)) return;
-
-  const member = message.member;
-  if (!member) return;
-
-  const baseRoleName = process.env.MANAGER || '';
-  const baseRole = message.guild.roles.cache.find(r => r.name === baseRoleName);
-  if (!baseRole) {
-    await message.reply(`Base role "${baseRoleName}" not found.`);
-    return;
-  }
-
-  if (member.roles.highest.position < baseRole.position) {
-    await message.reply('❌ You do not have permission to use this command.');
-    return;
-  }
-
-  const raw = message.content.slice(PREFIX.length).trim();
-  const args = parseArgs(raw);
-  if (args.length < 2) {
-    await message.reply(
-      '❌ Usage: !say [#channel or channelID] "content" "title(optional)" "description(optional)" "imageURL(optional)" "color(optional)"'
-    );
-    return;
-  }
-
-  const channelArg = args[0];
-  const mention = channelArg.match(/^<#(\d+)>$/);
-  const channelId = mention ? mention[1] : channelArg;
-  const ch = message.guild.channels.cache.get(channelId);
-
-  if (!ch || !ch.isTextBased()) {
-    await message.reply('❌ Provide a valid text channel mention or ID.');
-    return;
-  }
-  const target = ch as TextChannel;
-
-  const content = args[1];
-  const title = args[2] || '';
-  const description = args[3] || '';
-  const imageUrl = args[4] || '';
-  const colorInput = args[5] || '#5865F2'; // 기본 색상
-
-  // 색상 유효성 검사
-  const isValidHexColor = /^#([0-9A-F]{6}|[0-9A-F]{3})$/i.test(colorInput);
-  const embedColor = isValidHexColor
-    ? parseInt(colorInput.replace('#', ''), 16)
-    : 0x5865F2;
-
-  const embed = new EmbedBuilder()
-    .setColor(embedColor)
-    .setDescription(`**${content}**`)
-    .setTimestamp();
-
-  if (title && title != "" && title != " ") embed.setTitle(`📢 ${title}`);
-  if (description && description != "" && description != " ")
-    embed.setFooter({
-      text: description,
-      iconURL: client.user?.displayAvatarURL() ?? undefined
-    });
-  if (imageUrl && imageUrl != "" && imageUrl != " ") embed.setThumbnail(imageUrl);
-
-  try {
-    await target.send({ embeds: [embed] });
-    const emojiId = process.env.REACTION_EMOJI_ID;
-    if (emojiId) {
-      await message.react(emojiId).catch(() => {});
-    } else {
-      await message.react('1404415892120539216').catch(() => {});
+  // ----- !say [#channel or ID] "content" ... -----
+  if (message.content.startsWith('!say')) {
+    const baseRoleName = process.env.MANAGER || '';
+    const baseRole = message.guild.roles.cache.find(r => r.name === baseRoleName);
+    if (!baseRole) {
+      await message.reply(`Base role "${baseRoleName}" not found.`);
+      return;
     }
-  } catch (e) {
-    console.error('!say send failed', e);
-    await message.reply('❌ Failed to send message.');
-  }
-});
 
-client.on('messageCreate', async (message: Message) => {
-  if (message.author.bot) return;
-  if (!message.guild) return;
+    if (!member || member.roles.highest.position < baseRole.position) {
+      await message.reply('❌ You do not have permission to use this command.');
+      return;
+    }
 
-  const PREFIX = '!fuckrozy';
-  if (!message.content.startsWith(PREFIX)) return;
+    const raw = message.content.slice('!say'.length).trim();
+    const args = parseArgs(raw);
+    if (args.length < 2) {
+      await message.reply(
+        '❌ Usage: !say [#channel or channelID] "content" "title(optional)" "description(optional)" "imageURL(optional)" "color(optional)"'
+      );
+      return;
+    }
 
-  const member = message.member;
-  if (!member) return;
+    const channelArg = args[0];
+    const mention = channelArg.match(/^<#(\d+)>$/);
+    const channelId = mention ? mention[1] : channelArg;
+    const ch = message.guild.channels.cache.get(channelId);
 
-  // name of role
-  const roleName = process.env.FUCKROZY_ROLE || '';
-  const role = message.guild.roles.cache.find(r => r.name === roleName);
+    if (!ch || !ch.isTextBased()) {
+      await message.reply('❌ Provide a valid text channel mention or ID.');
+      return;
+    }
+    const target = ch as TextChannel;
 
-  if (!role) {
-    await message.reply(`can't find "${roleName}"`);
+    const content = args[1];
+    const title = args[2] || '';
+    const description = args[3] || '';
+    const imageUrl = args[4] || '';
+    const colorInput = args[5] || '#5865F2';
+
+    const isValidHexColor = /^#([0-9A-F]{6}|[0-9A-F]{3})$/i.test(colorInput);
+    const embedColor = isValidHexColor ? parseInt(colorInput.replace('#', ''), 16) : 0x5865F2;
+
+    const embed = new EmbedBuilder()
+      .setColor(embedColor)
+      .setDescription(`**${content}**`)
+      .setTimestamp();
+
+    if (title.trim() !== '') embed.setTitle(`📢 ${title}`);
+    if (description.trim() !== '') embed.setFooter({ text: description, iconURL: client.user?.displayAvatarURL() ?? undefined });
+    if (imageUrl.trim() !== '') embed.setThumbnail(imageUrl);
+
+    try {
+      await target.send({ embeds: [embed] });
+      const emojiId = process.env.REACTION_EMOJI_ID;
+      if (emojiId) await message.react(emojiId).catch(() => {});
+      else await message.react('1404415892120539216').catch(() => {});
+    } catch (e) {
+      console.error('!say send failed', e);
+      await message.reply('❌ Failed to send message.');
+    }
     return;
   }
 
-  if (!member.roles.cache.has(role.id)) {
-    await message.reply('❌ You do not have permission to fuck rrozy!');
+  // ----- !fuckrozy -----
+  if (message.content.startsWith('!fuckrozy')) {
+    const roleName = process.env.FUCKROZY_ROLE || '';
+    const role = message.guild.roles.cache.find(r => r.name === roleName);
+
+    if (!role) {
+      await message.reply(`can't find "${roleName}"`);
+      return;
+    }
+
+    if (!member?.roles.cache.has(role.id)) {
+      await message.reply('❌ You do not have permission to fuck rrozy!');
+      return;
+    }
+
+    const args = message.content.trim().split(/\s+/);
+    let count: string | number = 1;
+    if (args.length > 1) {
+      const n = parseInt(args[1], 10);
+      count = isNaN(n) ? args[1] : n;
+    }
+
+    const rrozyMention = roleMention(process.env.RROZY || '1404793396404682793');
+    if (message.channel.isTextBased()) {
+      await (message.channel as TextChannel).send(`${rrozyMention} fucked by ${member.toString()} ${count} times!`);
+    }
     return;
   }
-
-  // Parse number argument
-  const args = message.content.trim().split(/\s+/);
-  let count: string | number = 1;
-  if (args.length > 1) {
-    // 숫자면 숫자로, 아니면 문자열로
-    const n = parseInt(args[1], 10);
-    count = isNaN(n) ? args[1] : n;
-  }
-
-  const rrozyMention = roleMention(process.env.RROZY || '1404793396404682793');
-  if (message.channel.isTextBased()) {
-    await (message.channel as TextChannel).send(`${rrozyMention} fucked by ${member.toString()} ${count} times!`);
-  }
 });
+
 
 
 // ---------------- start HTTP server for uptime ping ----------------
