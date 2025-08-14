@@ -227,7 +227,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 
   // ------------------ /verifyme ------------------
   if (commandName === 'verifyme') {
-    console.log('Verify command received from', guildMember.user.tag);
+    
     await ctx.deferReply({ ephemeral: true });
 
     let currentStage = -1;
@@ -257,6 +257,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
     } else {
       await ctx.editReply({ content: 'YOU GOT ULTIMATELY VERIFIED!' });
     }
+    console.log('Verify command received from', guildMember.user.tag);
     return;
   }
 
@@ -344,7 +345,7 @@ client.on('messageCreate', async (message: Message) => {
 
   // ----- !accept [threadID] (매니저 전용) -----
   if (message.content.startsWith('!accept ')) {
-    console.log('!accept command received:', message.content);
+    
     const managerRoleName = process.env.MANAGER || '';
     const managerRole = message.guild.roles.cache.find(r => r.name === managerRoleName);
     if (!managerRole) {
@@ -429,6 +430,7 @@ client.on('messageCreate', async (message: Message) => {
     } else {
       await message.react('1404415892120539216').catch(() => {});
     }
+    console.log('!accept command received:', message.content);
     return;
   }
 
@@ -476,7 +478,6 @@ client.on('messageCreate', async (message: Message) => {
 
   // ----- !say [#channel or ID] "content" ... -----
   if (message.content.startsWith('!say')) {
-    console.log('!say command received:', message.content);
     const baseRoleName = process.env.MANAGER || '';
     const baseRole = message.guild.roles.cache.find(r => r.name === baseRoleName);
     if (!baseRole) {
@@ -536,6 +537,7 @@ client.on('messageCreate', async (message: Message) => {
       console.error('!say send failed', e);
       await message.reply('❌ Failed to send message.');
     }
+    console.log('!say command received:', message.content);
     return;
   }
 
