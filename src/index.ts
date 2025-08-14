@@ -227,6 +227,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 
   // ------------------ /verifyme ------------------
   if (commandName === 'verifyme') {
+    console.log('Verify command received from', guildMember.user.tag);
     await ctx.deferReply({ ephemeral: true });
 
     let currentStage = -1;
@@ -343,6 +344,7 @@ client.on('messageCreate', async (message: Message) => {
 
   // ----- !accept [threadID] (매니저 전용) -----
   if (message.content.startsWith('!accept ')) {
+    console.log('!accept command received:', message.content);
     const managerRoleName = process.env.MANAGER || '';
     const managerRole = message.guild.roles.cache.find(r => r.name === managerRoleName);
     if (!managerRole) {
@@ -474,6 +476,7 @@ client.on('messageCreate', async (message: Message) => {
 
   // ----- !say [#channel or ID] "content" ... -----
   if (message.content.startsWith('!say')) {
+    console.log('!say command received:', message.content);
     const baseRoleName = process.env.MANAGER || '';
     const baseRole = message.guild.roles.cache.find(r => r.name === baseRoleName);
     if (!baseRole) {
