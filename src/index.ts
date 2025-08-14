@@ -25,7 +25,7 @@ import fs from 'fs';
 import path from 'path';
 import { google } from 'googleapis';
 import { docs_v1 } from 'googleapis';
-
+console.log('TOKEN =', process.env.TOKEN); // 디버깅용
 dotenv.config();
 
 /**
