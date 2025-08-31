@@ -186,13 +186,19 @@ const client = new Client({
 client.commands = new Collection();
 
 // commands 폴더 로드
+const commands: any[] = [];
 const commandsPath = path.join(__dirname, "commands");
 const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".ts") || file.endsWith(".js"));
 
+
 for (const file of commandFiles) {
   const command = require(path.join(commandsPath, file));
-  client.commands.set(command.data.name, command);
+  if ("data" in command && "execute" in command) {
+    client.commands.set(command.data.name, command);
+    commands.push(command.data.toJSON()); // 등록용
+  }
 }
+
 
 // Register slash commands (guild-scoped)
 const verifyCmd = new SlashCommandBuilder()

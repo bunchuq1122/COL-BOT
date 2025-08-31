@@ -34,13 +34,13 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   if (!interaction.guild) {
-    return interaction.reply({ content: "❌ 서버에서만 사용 가능합니다.", ephemeral: true });
+    return interaction.reply({ content: "❌ only use in the col server.", ephemeral: true });
   }
 
   // 🔑 서버 오너 권한 체크
   if (interaction.user.id !== interaction.guild.ownerId) {
     return interaction.reply({
-      content: "🚫 이 명령어는 서버 오너만 사용할 수 있습니다.",
+      content: "🚫 The server owner only.",
       ephemeral: true,
     });
   }
