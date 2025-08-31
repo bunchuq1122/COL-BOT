@@ -23,6 +23,7 @@ import {
 import * as dotenv from 'dotenv';
 import http from 'http';
 import fs from 'fs';
+import { readFileSync } from "fs";
 import path from 'path';
 import { google } from 'googleapis';
 import { docs_v1 } from 'googleapis';
@@ -183,43 +184,6 @@ const client = new Client({
 });
 
 
-client.commands = new Collection();
-
-// commands 폴더 로드
-const commands: any[] = [];
-
-// dist/commands 폴더 참조
-const commandsPath = path.join(__dirname, "commands"); 
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".js")); // JS만 읽음
-
-for (const file of commandFiles) {
-  const command = require(path.join(commandsPath, file));
-  if ("data" in command && "execute" in command) {
-    client.commands.set(command.data.name, command);
-  }
-}
-
-
-
-for (const file of commandFiles) {
-  const command = require(path.join(commandsPath, file));
-  if ("data" in command && "execute" in command) {
-    client.commands.set(command.data.name, command);
-    commands.push(command.data.toJSON()); // 등록용
-  }
-}
-
-// badapple 명령어 직접 등록 (만약 자동 로드가 안될 경우)
-try {
-  const badapple = require(path.join(commandsPath, "badapple.ts"));
-  if ("data" in badapple && "execute" in badapple) {
-    client.commands.set(badapple.data.name, badapple);
-    commands.push(badapple.data.toJSON());
-  }
-} catch (e) {
-  console.warn('badapple.ts not found or failed to load:', e);
-}
-
 // Register slash commands (guild-scoped)
 const verifyCmd = new SlashCommandBuilder()
   .setName('verifyme')
@@ -236,6 +200,12 @@ const listCmd = new SlashCommandBuilder()
   .setDescription('Show list of voted levels (by avg)')
   .toJSON();
 
+const badappleCmd = new SlashCommandBuilder()
+  .setName('badapple')
+  .setDescription('Play Bad Apple in ASCII')
+  .toJSON();
+
+
 // verification stages
 const VERIFY_STAGES = ['verified', 'double verified', 'triple verified', 'ultimately verified'];
 
@@ -245,7 +215,7 @@ client.once('ready', async () => {
   const guildId = process.env.GUILD_ID!;
   const guild = await client.guilds.fetch(guildId);
 
-  const cmds = [verifyCmd, voteCmd, listCmd];
+  const cmds = [verifyCmd, voteCmd, listCmd, badappleCmd];
   await guild.commands.set(cmds);
   console.log('✅ Registered commands in guild', guild.name);
 });
@@ -610,6 +580,119 @@ client.on('messageCreate', async (message: Message) => {
   }
 });
 
+
+const WIDTH = 16 * 5;
+
+function convertToAscii(frameStr: string): string {
+  const asciiMap: Record<string, string> = { "0": " ", "1": "#" };
+  let result = "";
+  for (let i = 0; i < frameStr.length; i += WIDTH) {
+    result += frameStr
+      .slice(i, i + WIDTH)
+      .split("")
+      .map((p) => asciiMap[p] ?? "?")
+      .join("") + "\n";
+  }
+  return "```\n" + result + "```";
+}
+
+async function handleBadApple(interaction: ChatInputCommandInteraction) {
+  if (!interaction.guild) {
+    return interaction.reply({ content: "❌ 서버에서만 사용 가능합니다.", ephemeral: true });
+  }
+
+  // 서버 오너만 사용 가능
+  if (interaction.user.id !== interaction.guild.ownerId) {
+    return interaction.reply({ content: "🚫 이 명령어는 서버 오너만 사용할 수 있습니다.", ephemeral: true });
+  }
+
+  // video.txt 읽기
+  const frames = readFileSync("./video.txt", "utf-8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  let frameIndex = 0;
+  let playing = true;
+
+  // 최초 메시지
+  const msg = await interaction.reply({ content: convertToAscii(frames[frameIndex]), fetchReply: true });
+
+  // 멈춤 리액션 추가
+  await msg.react("⏹️");
+  const collector = msg.createReactionCollector({
+    filter: (reaction, user) => reaction.emoji.name === "⏹️" && !user.bot,
+  });
+
+  collector.on("collect", () => {
+    playing = false;
+    collector.stop();
+  });
+
+  const delay = 1000; // 1초 간격 (프레임)
+  const interval = setInterval(async () => {
+    if (!playing) return clearInterval(interval);
+
+    frameIndex++;
+    if (frameIndex >= frames.length) return clearInterval(interval);
+
+    await msg.edit(convertToAscii(frames[frameIndex])).catch(() => {});
+  }, delay);
+}
+
+
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === 'badapple') {
+    if (!interaction.guild) return interaction.reply({ content: "❌ 서버에서만 사용 가능", ephemeral: true });
+    if (interaction.user.id !== interaction.guild.ownerId) {
+      return interaction.reply({ content: "🚫 이 명령어는 서버 오너만 사용 가능합니다", ephemeral: true });
+    }
+
+    const frames = readFileSync('./video.txt', 'utf-8')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0);
+
+    let frameIndex = 0;
+    let playing = true;
+
+    const WIDTH = 16 * 5;
+    const convertToAscii = (frameStr: string) => {
+      const asciiMap: Record<string, string> = { '0': ' ', '1': '#' };
+      let result = '';
+      for (let i = 0; i < frameStr.length; i += WIDTH) {
+        result += frameStr
+          .slice(i, i + WIDTH)
+          .split('')
+          .map(p => asciiMap[p] ?? '?')
+          .join('') + '\n';
+      }
+      return '```\n' + result + '```';
+    };
+
+    const msg = await interaction.reply({ content: convertToAscii(frames[frameIndex]), fetchReply: true });
+
+    // 멈춤 리액션 추가
+    await msg.react('⏹️');
+    const collector = msg.createReactionCollector({
+      filter: (reaction, user) => reaction.emoji.name === '⏹️' && !user.bot,
+    });
+    collector.on('collect', () => {
+      playing = false;
+      collector.stop();
+    });
+
+    const delay = 1000; // 1초 간격
+    const interval = setInterval(async () => {
+      if (!playing) return clearInterval(interval);
+      frameIndex++;
+      if (frameIndex >= frames.length) return clearInterval(interval);
+      await msg.edit(convertToAscii(frames[frameIndex])).catch(() => {});
+    }, delay);
+  }
+});
 
 
 // ---------------- start HTTP server for uptime ping ----------------
