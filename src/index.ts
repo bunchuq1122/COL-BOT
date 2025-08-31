@@ -17,7 +17,8 @@ import {
   StringSelectMenuInteraction,
   ModalSubmitInteraction,
   Message,
-  roleMention
+  roleMention,
+  Collection
 } from 'discord.js';
 import * as dotenv from 'dotenv';
 import http from 'http';
@@ -180,6 +181,18 @@ const client = new Client({
   ],
   partials: [Partials.Message, Partials.Channel]
 });
+
+
+client.commands = new Collection();
+
+// commands 폴더 로드
+const commandsPath = path.join(__dirname, "commands");
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".ts") || file.endsWith(".js"));
+
+for (const file of commandFiles) {
+  const command = require(path.join(commandsPath, file));
+  client.commands.set(command.data.name, command);
+}
 
 // Register slash commands (guild-scoped)
 const verifyCmd = new SlashCommandBuilder()
