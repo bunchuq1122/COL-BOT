@@ -199,6 +199,16 @@ for (const file of commandFiles) {
   }
 }
 
+// badapple 명령어 직접 등록 (만약 자동 로드가 안될 경우)
+try {
+  const badapple = require(path.join(commandsPath, "badapple.ts"));
+  if ("data" in badapple && "execute" in badapple) {
+    client.commands.set(badapple.data.name, badapple);
+    commands.push(badapple.data.toJSON());
+  }
+} catch (e) {
+  console.warn('badapple.ts not found or failed to load:', e);
+}
 
 // Register slash commands (guild-scoped)
 const verifyCmd = new SlashCommandBuilder()
