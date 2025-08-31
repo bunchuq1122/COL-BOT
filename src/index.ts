@@ -187,8 +187,12 @@ client.commands = new Collection();
 
 // commands 폴더 로드
 const commands: any[] = [];
-const commandsPath = path.join(__dirname, "commands");
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".ts") || file.endsWith(".js"));
+const commandsPath = path.join(__dirname, "commands"); // dist/commands
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".js"));
+for (const file of commandFiles) {
+  const command = require(path.join(commandsPath, file));
+  client.commands.set(command.data.name, command);
+}
 
 
 for (const file of commandFiles) {
