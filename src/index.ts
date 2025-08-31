@@ -187,12 +187,17 @@ client.commands = new Collection();
 
 // commands 폴더 로드
 const commands: any[] = [];
+
 const commandsPath = path.join(__dirname, "commands"); // dist/commands
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".js"));
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".js")); // JS만 읽음
+
 for (const file of commandFiles) {
   const command = require(path.join(commandsPath, file));
-  client.commands.set(command.data.name, command);
+  if ("data" in command && "execute" in command) {
+    client.commands.set(command.data.name, command);
+  }
 }
+
 
 
 for (const file of commandFiles) {
