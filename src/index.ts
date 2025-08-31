@@ -188,7 +188,8 @@ client.commands = new Collection();
 // commands 폴더 로드
 const commands: any[] = [];
 
-const commandsPath = path.join(__dirname, "commands"); // dist/commands
+// dist/commands 폴더 참조
+const commandsPath = path.join(__dirname, "commands"); 
 const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".js")); // JS만 읽음
 
 for (const file of commandFiles) {
